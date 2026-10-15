@@ -105,6 +105,7 @@ pub async fn resolve_doh_with_provider(host: &str, provider: &str) -> Result<Ipv
         "google" => vec![google, cloudflare, quad9, adguard],
         "quad9" => vec![quad9, cloudflare, google, adguard],
         "adguard" => vec![adguard, cloudflare, google, quad9],
+        "yandex" => vec![cloudflare, google, quad9, adguard],
         _ => vec![cloudflare, google, quad9, adguard],
     };
 
@@ -607,6 +608,7 @@ pub async fn benchmark_doh_providers() -> Vec<DohBenchmarkResult> {
         ("google", "Google DNS (8.8.8.8)", "8.8.8.8:443"),
         ("quad9", "Quad9 (9.9.9.9)", "9.9.9.9:443"),
         ("adguard", "AdGuard (94.140.14.14)", "94.140.14.14:443"),
+        ("yandex", "Yandex DNS (77.88.8.8)", "77.88.8.8:443"),
     ];
 
     let mut list = Vec::new();

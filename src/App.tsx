@@ -1428,6 +1428,7 @@ export default function App() {
                   <option value="google">Google DNS (dns.google - Maksimum Kararlılık)</option>
                   <option value="quad9">Quad9 (9.9.9.9 - Gizlilik ve Güvenlik)</option>
                   <option value="adguard">AdGuard (dns.adguard-dns.com - Reklam Engelleyici)</option>
+                  <option value="yandex">Yandex DNS (77.88.8.8 - Hızlı ve Kararlı)</option>
                 </select>
               </div>
 
