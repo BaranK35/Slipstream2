@@ -426,16 +426,25 @@ export default function App() {
   }, [cat, cfg]);
 
   const filteredPlatforms = useMemo(() => {
-    return allPlatforms.filter((p) => {
-      if (platformFilter === "apps" && p.category !== "app") return false;
-      if (platformFilter === "games" && p.category !== "game") return false;
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        return p.name.toLowerCase().includes(q) || p.tag.toLowerCase().includes(q);
-      }
-      return true;
-    });
-  }, [allPlatforms, platformFilter, searchQuery]);
+    const enabledSet = new Set(cfg?.enabled_apps || []);
+    return allPlatforms
+      .filter((p) => {
+        if (platformFilter === "apps" && p.category !== "app") return false;
+        if (platformFilter === "games" && p.category !== "game") return false;
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase();
+          return p.name.toLowerCase().includes(q) || p.tag.toLowerCase().includes(q);
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const isAEnabled = enabledSet.has(a.id);
+        const isBEnabled = enabledSet.has(b.id);
+        if (isAEnabled && !isBEnabled) return -1;
+        if (!isAEnabled && isBEnabled) return 1;
+        return 0;
+      });
+  }, [allPlatforms, platformFilter, searchQuery, cfg?.enabled_apps]);
 
   if (!cat || !cfg) {
     return (
@@ -445,7 +454,7 @@ export default function App() {
             <img src={logoSvg} alt="Slipstream" className="brand-logo" />
             <div className="status-indicator busy" />
             <span className="brand-name" data-tauri-drag-region>Slipstream</span>
-            <span className="version-pill">v{updateInfo?.current_version || "0.1.4"}</span>
+            <span className="version-pill">v{updateInfo?.current_version || "0.1.5"}</span>
           </div>
           <div className="window-controls">
             <button className="win-btn minimize" title="Tepsiye Küçült" onClick={() => invoke("hide_window")}>
@@ -810,7 +819,7 @@ export default function App() {
           <img src={logoSvg} alt="Slipstream" className="brand-logo" />
           <div className={`status-indicator ${busy ? "busy" : on ? "active" : "inactive"}`} />
           <span className="brand-name" data-tauri-drag-region>Slipstream</span>
-          <span className="version-pill">v{updateInfo?.current_version || "0.1.4"}</span>
+          <span className="version-pill">v{updateInfo?.current_version || "0.1.5"}</span>
         </div>
         <div className="window-controls">
           <button
@@ -1311,7 +1320,7 @@ export default function App() {
                 <div className="pref-meta">
                   <span className="pref-name">Sürüm Kontrolü</span>
                   <span className="pref-desc">
-                    Mevcut: v{updateInfo?.current_version || "0.1.4"}
+                    Mevcut: v{updateInfo?.current_version || "0.1.5"}
                     {updateInfo?.has_update ? (
                       <span style={{ color: "var(--cyan)", fontWeight: 600, marginLeft: 6 }}>
                         (🚀 v{updateInfo.latest_version} Yayında)

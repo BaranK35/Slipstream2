@@ -1,5 +1,5 @@
 {
-  "version": "0.1.4",
-  "notes": "Roblox tüm web/istemci/CDN/captcha domainleri ve Anycast/Akamai IP yönlendirmeleri eklendi, Yandex DNS (77.88.8.8) desteği entegre edildi.",
-  "url": "https://github.com/BaranK35/Slipstreamtest2/releases/download/v0.1.4/Slipstream-Setup.exe"
+  "version": "0.1.5",
+  "notes": "Roblox oyuna katılma ve sunucu bağlantı altyapısı (gamejoin, matchmaking, assetdelivery ve 84 alt alan adı) eksiksiz eklendi. Aktif ve açık olan uygulama ve oyunlar listenin en üstünde gösterilecek şekilde sıralama güncellendi. Kapanış ve çıkış işlemlerinde arka plan motorunun ve sürücüsünün eksiksiz temizlenmesi garanti altına alındı.",
+  "url": "https://github.com/BaranK35/Slipstreamtest2/releases/download/v0.1.5/Slipstream-Setup.exe"
 }
