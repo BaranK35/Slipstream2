@@ -445,7 +445,7 @@ export default function App() {
             <img src={logoSvg} alt="Slipstream" className="brand-logo" />
             <div className="status-indicator busy" />
             <span className="brand-name" data-tauri-drag-region>Slipstream</span>
-            <span className="version-pill">v{updateInfo?.current_version || "0.1.1"}</span>
+            <span className="version-pill">v{updateInfo?.current_version || "0.1.3"}</span>
           </div>
           <div className="window-controls">
             <button className="win-btn minimize" title="Tepsiye Küçült" onClick={() => invoke("hide_window")}>
@@ -810,7 +810,7 @@ export default function App() {
           <img src={logoSvg} alt="Slipstream" className="brand-logo" />
           <div className={`status-indicator ${busy ? "busy" : on ? "active" : "inactive"}`} />
           <span className="brand-name" data-tauri-drag-region>Slipstream</span>
-          <span className="version-pill">v{updateInfo?.current_version || "0.1.1"}</span>
+          <span className="version-pill">v{updateInfo?.current_version || "0.1.3"}</span>
         </div>
         <div className="window-controls">
           <button
@@ -1311,7 +1311,7 @@ export default function App() {
                 <div className="pref-meta">
                   <span className="pref-name">Sürüm Kontrolü</span>
                   <span className="pref-desc">
-                    Mevcut: v{updateInfo?.current_version || "0.1.1"}
+                    Mevcut: v{updateInfo?.current_version || "0.1.3"}
                     {updateInfo?.has_update ? (
                       <span style={{ color: "var(--cyan)", fontWeight: 600, marginLeft: 6 }}>
                         (🚀 v{updateInfo.latest_version} Yayında)
