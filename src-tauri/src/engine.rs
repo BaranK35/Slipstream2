@@ -293,11 +293,20 @@ impl Engine {
         r
     }
 
+/// Forcefully terminates any orphan winws.exe processes to free WinDivert driver handles.
+pub fn kill_all_winws() {
+    let _ = Command::new("taskkill")
+        .args(["/IM", "winws.exe", "/T", "/F"])
+        .creation_flags(0x0800_0000)
+        .output();
+}
+
     fn start_inner(&mut self, cfg: &Config) -> Result<(), String> {
         if let Some(mut c) = self.child.take() {
             let _ = c.kill();
             let _ = c.wait();
         }
+        Self::kill_all_winws();
 
         if !self.bin.exists() {
             return Err(format!(
@@ -378,6 +387,7 @@ impl Engine {
             let _ = c.kill();
             let _ = c.wait();
         }
+        Self::kill_all_winws();
 
         // Clean hosts file bypass entries
         dns::clear_bypass_hosts();
@@ -389,10 +399,26 @@ impl Engine {
         self.ensure_relay(false);
         proxy::clean_stale_proxy();
 
-        let _ = Command::new("sc")
-            .args(["stop", "WinDivert"])
-            .creation_flags(0x0800_0000)
-            .output();
+        // Retried stop for WinDivert driver to ensure kernel handle release
+        for _ in 0..4 {
+            let out = Command::new("sc")
+                .args(["stop", "windivert"])
+                .creation_flags(0x0800_0000)
+                .output();
+            if let Ok(o) = out {
+                let s = String::from_utf8_lossy(&o.stdout);
+                if s.contains("STOPPED") || s.contains("1062") || s.contains("1060") {
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(80));
+        }
+    }
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 

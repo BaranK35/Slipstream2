@@ -128,10 +128,14 @@ fn set_file_dialog_active(active: bool) {
 
 #[tauri::command]
 fn close_app(app: tauri::AppHandle, s: State<AppState>) {
-    let mut eng = s.engine.lock().unwrap();
-    eng.ensure_relay(false);
-    eng.stop();
+    {
+        let mut eng = s.engine.lock().unwrap();
+        eng.ensure_relay(false);
+        eng.stop();
+    }
+    Engine::kill_all_winws();
     app.exit(0);
+    std::process::exit(0);
 }
 
 #[tauri::command]
@@ -994,6 +998,7 @@ fn main() {
             MINIMIZE_TO_TRAY.store(boot_cfg.minimize_to_tray, Ordering::SeqCst);
             let has_discord = boot_cfg.enabled_apps.contains(&"discord".to_string());
 
+            Engine::kill_all_winws();
             let mut engine = Engine::new(dir, bin);
             engine.ensure_relay(has_discord);
 
@@ -1188,18 +1193,24 @@ fn main() {
                     api.prevent_close();
                     let _ = window.hide();
                 } else {
-                    let state = window.state::<AppState>();
-                    let mut eng = state.engine.lock().unwrap();
-                    eng.ensure_relay(false);
-                    eng.stop();
+                    if let Some(state) = window.try_state::<AppState>() {
+                        if let Ok(mut eng) = state.engine.lock() {
+                            eng.ensure_relay(false);
+                            eng.stop();
+                        }
+                    }
+                    Engine::kill_all_winws();
                     std::process::exit(0);
                 }
             }
             WindowEvent::Destroyed => {
-                let state = window.state::<AppState>();
-                let mut eng = state.engine.lock().unwrap();
-                eng.ensure_relay(false);
-                eng.stop();
+                if let Some(state) = window.try_state::<AppState>() {
+                    if let Ok(mut eng) = state.engine.lock() {
+                        eng.ensure_relay(false);
+                        eng.stop();
+                    }
+                }
+                Engine::kill_all_winws();
             }
             _ => {}
         })
@@ -1236,6 +1247,17 @@ fn main() {
             hide_toast_notification,
             show_toast_notification
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Slipstream");
+        .build(tauri::generate_context!())
+        .expect("error while building Slipstream")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    if let Ok(mut eng) = state.engine.lock() {
+                        eng.ensure_relay(false);
+                        eng.stop();
+                    }
+                }
+                Engine::kill_all_winws();
+            }
+        });
 }
