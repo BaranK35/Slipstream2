@@ -50,14 +50,34 @@ pub const DISCORD_HOST_MAP: &[(&str, &str)] = &[
     ("discord.media", "162.159.129.235"),
 ];
 
-// Real Anycast IPs for Roblox services
+// Real Anycast IPs for Roblox services (bypasses ISP DNS poisoning)
 pub const ROBLOX_HOST_MAP: &[(&str, &str)] = &[
-    ("roblox.com", "128.116.119.3"),
-    ("www.roblox.com", "128.116.119.3"),
-    ("setup.rbxcdn.com", "128.116.119.3"),
-    ("api.roblox.com", "128.116.119.3"),
-    ("clientsettings.roblox.com", "128.116.119.3"),
-    ("versioncompatibility.api.roblox.com", "128.116.119.3"),
+    ("roblox.com", "128.116.44.3"),
+    ("www.roblox.com", "128.116.44.3"),
+    ("web.roblox.com", "128.116.44.3"),
+    ("api.roblox.com", "128.116.44.3"),
+    ("apis.roblox.com", "128.116.44.3"),
+    ("auth.roblox.com", "128.116.44.3"),
+    ("clientsettings.roblox.com", "128.116.44.3"),
+    ("clientsettings.api.roblox.com", "128.116.44.3"),
+    ("versioncompatibility.api.roblox.com", "128.116.44.3"),
+    ("ecsv2.roblox.com", "128.116.44.3"),
+    ("accountinformation.roblox.com", "128.116.44.3"),
+    ("accountsettings.roblox.com", "128.116.44.3"),
+    ("games.roblox.com", "128.116.44.3"),
+    ("friends.roblox.com", "128.116.44.3"),
+    ("chat.roblox.com", "128.116.44.3"),
+    ("economy.roblox.com", "128.116.44.3"),
+    ("avatar.roblox.com", "128.116.44.3"),
+    ("realtime.roblox.com", "128.116.44.3"),
+    ("presence.roblox.com", "128.116.44.3"),
+    ("thumbnails.roblox.com", "128.116.44.3"),
+    ("assetdelivery.roblox.com", "128.116.44.3"),
+    ("locale.roblox.com", "128.116.44.3"),
+    ("metrics.roblox.com", "128.116.44.3"),
+    ("ncs.roblox.com", "128.116.44.3"),
+    ("client-telemetry.roblox.com", "128.116.44.3"),
+    ("clientsettingscdn.roblox.com", "104.96.152.82"),
 ];
 
 fn ps(script: &str) -> String {
