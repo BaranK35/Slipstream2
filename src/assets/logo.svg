@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="slipstreamGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00F5FF" />
+      <stop offset="35%" stop-color="#00C0FF" />
+      <stop offset="75%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#4F46E5" />
+    </linearGradient>
+    <linearGradient id="slipstreamGrad2" x1="100%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#00F5FF" />
+      <stop offset="35%" stop-color="#00C0FF" />
+      <stop offset="75%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#4F46E5" />
+    </linearGradient>
+  </defs>
+
+  <g id="slipstream-mark">
+    <!-- Top Aerodynamic Foil -->
+    <path d="M 385, 80
+             L 195, 80
+             C 131.5, 80, 80, 131.5, 80, 195
+             C 80, 245, 115, 282, 175, 298
+             L 300, 326
+             C 314, 329, 324, 317, 318, 304
+             L 306, 276
+             C 302, 268, 292, 263, 282, 260
+             L 185, 228
+             C 152, 218, 136, 206, 136, 195
+             C 136, 162.4, 162.4, 136, 195, 136
+             L 329, 136
+             Z" 
+          fill="url(#slipstreamGrad1)" />
+
+    <!-- Bottom Aerodynamic Foil (180° Rotational Symmetry) -->
+    <path d="M 385, 80
+             L 195, 80
+             C 131.5, 80, 80, 131.5, 80, 195
+             C 80, 245, 115, 282, 175, 298
+             L 300, 326
+             C 314, 329, 324, 317, 318, 304
+             L 306, 276
+             C 302, 268, 292, 263, 282, 260
+             L 185, 228
+             C 152, 218, 136, 206, 136, 195
+             C 136, 162.4, 162.4, 136, 195, 136
+             L 329, 136
+             Z" 
+          transform="rotate(180 256 256)" 
+          fill="url(#slipstreamGrad2)" />
+  </g>
+</svg>

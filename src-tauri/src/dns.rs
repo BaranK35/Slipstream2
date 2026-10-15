@@ -1,0 +1,190 @@
+//! DNS utilities, hosts-based poisoning bypass, and recovery.
+//! Strictly ensures Windows network adapters are never forced to 127.0.0.1.
+//! Completely neutralizes ISP DNS poisoning (e.g. Türk Telekom 195.175.254.2 block)
+//! by injecting clean IP mappings directly into the Windows hosts file during active bypass.
+
+use std::{
+    fs,
+    os::windows::process::CommandExt,
+    path::{Path, PathBuf},
+    process::Command,
+};
+use crate::engine::Config;
+
+const STATE_FILE: &str = "dns_state.txt";
+const HOSTS_FILE: &str = r"C:\Windows\System32\drivers\etc\hosts";
+const HOSTS_TAG_START: &str = "# --- SLIPSTREAM BYPASS HOSTS START ---";
+const HOSTS_TAG_END: &str = "# --- SLIPSTREAM BYPASS HOSTS END ---";
+
+// Real Cloudflare anycast IPs for Discord services (bypasses ISP poisoned DNS redirects)
+pub const DISCORD_HOST_MAP: &[(&str, &str)] = &[
+    ("discord.com", "162.159.138.232"),
+    ("gateway.discord.gg", "162.159.133.234"),
+    ("status.discord.com", "162.159.138.232"),
+    ("updates.discord.com", "162.159.138.232"),
+    ("dl.discordapp.net", "162.159.138.232"),
+    ("cdn.discordapp.com", "162.159.130.233"),
+    ("media.discordapp.net", "162.159.133.232"),
+    ("images-ext-1.discordapp.net", "162.159.134.232"),
+    ("images-ext-2.discordapp.net", "162.159.130.232"),
+    ("attachments.discord.net", "162.159.135.232"),
+    ("attachments.discord.com", "162.159.138.232"),
+    ("cdn.discord.com", "162.159.138.232"),
+    ("discordapp.com", "162.159.138.232"),
+    ("discord.gg", "162.159.138.232"),
+    ("discordapp.net", "162.159.138.232"),
+    ("discordcdn.com", "162.159.138.232"),
+    ("discordsays.com", "162.159.138.232"),
+    ("discordsez.com", "162.159.138.232"),
+    ("discordactivities.com", "162.159.138.232"),
+    ("discord-activities.com", "162.159.138.232"),
+    ("dis.gd", "162.159.138.232"),
+    ("discord.co", "162.159.138.232"),
+    ("discord.dev", "162.159.138.232"),
+    ("discord.new", "162.159.138.232"),
+    ("discord.gift", "162.159.138.232"),
+    ("discord.gifts", "162.159.138.232"),
+    ("discord.store", "162.159.138.232"),
+    ("discord.tools", "162.159.138.232"),
+    ("discord.design", "162.159.138.232"),
+    ("discord.media", "162.159.138.232"),
+];
+
+// Real Anycast IPs for Roblox services
+pub const ROBLOX_HOST_MAP: &[(&str, &str)] = &[
+    ("roblox.com", "128.116.119.3"),
+    ("www.roblox.com", "128.116.119.3"),
+    ("setup.rbxcdn.com", "128.116.119.3"),
+    ("api.roblox.com", "128.116.119.3"),
+    ("clientsettings.roblox.com", "128.116.119.3"),
+    ("versioncompatibility.api.roblox.com", "128.116.119.3"),
+];
+
+fn ps(script: &str) -> String {
+    Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .creation_flags(0x0800_0000)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default()
+}
+
+/// Flushes Windows DNS resolver cache.
+pub fn flush() {
+    let _ = Command::new("ipconfig")
+        .arg("/flushdns")
+        .creation_flags(0x0800_0000)
+        .output();
+}
+
+/// Removes Slipstream bypass mappings from the Windows hosts file.
+pub fn clear_bypass_hosts() {
+    if let Ok(content) = fs::read_to_string(HOSTS_FILE) {
+        if content.contains(HOSTS_TAG_START) {
+            let mut new_lines = Vec::new();
+            let mut in_block = false;
+            for line in content.lines() {
+                if line.contains(HOSTS_TAG_START) {
+                    in_block = true;
+                    continue;
+                }
+                if line.contains(HOSTS_TAG_END) {
+                    in_block = false;
+                    continue;
+                }
+                if !in_block {
+                    new_lines.push(line);
+                }
+            }
+            let mut cleaned = new_lines.join("\r\n");
+            if !cleaned.ends_with("\r\n") {
+                cleaned.push_str("\r\n");
+            }
+            let _ = fs::write(HOSTS_FILE, cleaned);
+            flush();
+        }
+    }
+}
+
+/// Injects real clean IPs into Windows hosts file to neutralize ISP DNS poisoning
+/// for enabled apps (such as Discord and Roblox) with zero proxy or adapter DNS tampering.
+pub fn apply_bypass_hosts(cfg: &Config) {
+    clear_bypass_hosts();
+
+    let mut entries = Vec::new();
+    let has_discord = cfg.enabled_apps.iter().any(|a| a == "discord");
+    let has_roblox = cfg.enabled_apps.iter().any(|a| a == "roblox");
+
+    if has_discord {
+        for (domain, ip) in DISCORD_HOST_MAP {
+            entries.push(format!("{ip:<15} {domain}"));
+        }
+    }
+
+    if has_roblox {
+        for (domain, ip) in ROBLOX_HOST_MAP {
+            entries.push(format!("{ip:<15} {domain}"));
+        }
+    }
+
+    if entries.is_empty() {
+        return;
+    }
+
+    let existing = fs::read_to_string(HOSTS_FILE).unwrap_or_default();
+    let mut output = existing.trim_end().to_string();
+    output.push_str("\r\n\r\n");
+    output.push_str(HOSTS_TAG_START);
+    output.push_str("\r\n");
+    for entry in entries {
+        output.push_str(&entry);
+        output.push_str("\r\n");
+    }
+    output.push_str(HOSTS_TAG_END);
+    output.push_str("\r\n");
+
+    let _ = fs::write(HOSTS_FILE, output);
+    flush();
+}
+
+/// Restores any network adapter that was previously modified.
+pub fn restore(state: &Path) {
+    if state.exists() {
+        let _ = fs::remove_file(state);
+    }
+    clear_bypass_hosts();
+    reset_all_adapters();
+}
+
+/// Startup recovery: ensures no leftover 127.0.0.1 remains on any network adapter,
+/// and cleans any stale hosts entries.
+pub fn recover(dir: &Path) {
+    clear_bypass_hosts();
+    let state = dir.join(STATE_FILE);
+    if state.exists() {
+        restore(&state);
+    }
+}
+
+/// Force-resets all active network adapter DNS servers to automatic DHCP.
+pub fn reset_all_adapters() {
+    ps(r"Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.InterfaceIndex -ResetServerAddresses }");
+    flush();
+}
+
+#[allow(dead_code)]
+pub struct Dns {
+    _state: PathBuf,
+}
+
+#[allow(dead_code)]
+impl Dns {
+    pub fn start(dir: &Path, _domains: Vec<String>) -> Result<Dns, String> {
+        recover(dir);
+        Ok(Dns {
+            _state: dir.join(STATE_FILE),
+        })
+    }
+    pub fn set_domains(&self, _d: Vec<String>) {}
+    pub fn stop(&mut self) {}
+}

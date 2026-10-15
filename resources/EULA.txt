@@ -1,0 +1,44 @@
+================================================================================
+                    SLIPSTREAM YAZILIM KULLANICI LİSANS SÖZLEŞMESİ
+                           (SON KULLANICI SÖZLEŞMESİ - EULA)
+================================================================================
+
+Lütfen Slipstream yazılımını ("Yazılım") kurmadan veya kullanmadan önce bu
+sözleşmeyi dikkatlice okuyunuz. Bu yazılımı kurarak veya kullanarak, aşağıdaki
+şartları kabul etmiş sayılırsınız.
+
+1. LİSANS TANIMI VE KULLANIM
+Slipstream, kullanıcıların internet bağlantılarındaki derin paket inceleme (DPI)
+engellemelerini ve sansür mekanizmalarını yerel ağ düzeyinde aşmalarını sağlamak
+amacıyla geliştirilmiş bağımsız, açık kaynaklı bir masaüstü yardımcı aracıdır.
+Bu yazılım kişisel, ticari olmayan kullanım için ücretsiz olarak sağlanır.
+
+2. GİZLİLİK VE SIFIR VERİ TOPLAMA POLİTİKASI (KVKK & GDPR UYUMLULUĞU)
+a) Sıfır Kayıt (Zero-Log): Slipstream, gezindiğiniz web sitelerini, girdiğiniz
+   adresleri, indirdiğiniz verileri veya herhangi bir kişisel bilginizi asla
+   kaydetmez, loglamaz ve sunuculara göndermez.
+b) Yerel İşleme: Tüm paket desenkronizasyon ve hosts yönlendirme işlemleri
+   doğrudan sizin yerel bilgisayarınızın çekirdek ve paket katmanında
+   gerçekleştirilir. Dış bir VPN veya proxy sunucusuna hiçbir trafik aktarılmaz.
+c) Telemetri Yoktur: Uygulama içerisinde hiçbir analitik, reklam veya izleyici
+   kodu bulunmamaktadır.
+
+3. SORUMLULUK REDDİ (GARANTİ VERİLMEMESİ)
+a) Yazılım "OLDUĞU GİBİ" (AS-IS) ve tüm kusurlarıyla birlikte sunulmaktadır.
+   Geliştirici; yazılımın kesintisiz, hatasız çalışacağını veya her internet
+   servis sağlayıcısında her zaman sonuç vereceğini garanti etmez.
+b) İnternet Servis Sağlayıcıların (İSS) uyguladığı altyapı değişiklikleri,
+   IP blokajları veya yasal kısıtlamalardan doğabilecek erişim kesintilerinden
+   geliştirici sorumlu tutulamaz.
+c) Kullanıcının internet üzerinden eriştiği içerikler, üçüncü taraf platformların
+   kullanım kuralları ve yürürlükteki yerel mevzuata uyum tamamen kullanıcının
+   kendi sorumluluğundadır.
+
+4. GÜNCELLEMELER VE KALDIRMA
+Uygulama, yeni optimizasyonlar ve güvenlik yamaları çıktığında resmi GitHub
+deposu üzerinden güncelleme kontrolü yapabilir. Kullanıcı dilediği an Windows
+Program Ekle/Kaldır menüsünden yazılımı ve tüm bileşenlerini sisteminden
+tek tıkla tamamen kaldırabilir.
+
+Bu sözleşme şartlarını kabul ediyorsanız, kuruluma devam edebilirsiniz.
+================================================================================
