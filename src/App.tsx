@@ -944,9 +944,10 @@ export default function App() {
             {/* Search + Add Platform Row */}
             <div className="search-toolbar">
               <div className="search-bar">
+                <span className="search-icon">🔍</span>
                 <input
                   className="search-input"
-                  placeholder="🔍 Platform veya oyun ara..."
+                  placeholder="Platform veya oyun ara..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
@@ -1389,6 +1390,23 @@ export default function App() {
             {/* Group 3: Güvenli Ağ & DoH Benchmark */}
             <div className="pref-section-title">🌐 Güvenli Ağ & DNS (DoH)</div>
             <div className="pref-card">
+              <div className="pref-row" style={{ marginBottom: 10 }}>
+                <div className="pref-meta">
+                  <span className="pref-name">Otomatik Güvenli DNS Yönetimi</span>
+                  <span className="pref-desc">
+                    Discord ses kanalları ve engelli dinamik sunucular için ağ kartını otomatik olarak temiz DNS'e yönlendirir (Kapatıldığında eski haline döner).
+                  </span>
+                </div>
+                <div
+                  className={`switch ${cfg.manage_dns ? "checked" : ""}`}
+                  onClick={() => patch({ manage_dns: !cfg.manage_dns })}
+                >
+                  <div className="switch-thumb" />
+                </div>
+              </div>
+
+              <div className="pref-divider" />
+
               <div className="field-group" style={{ marginBottom: 6 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                   <label className="field-label" style={{ marginBottom: 0 }}>DoH DNS Sağlayıcısı</label>

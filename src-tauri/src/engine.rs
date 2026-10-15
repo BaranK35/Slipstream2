@@ -43,7 +43,7 @@ pub struct Config {
     pub custom_platforms: Vec<CustomPlatform>,
     pub custom_domains: Vec<String>,
     pub custom_exes: Vec<String>,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub manage_dns: bool,
 
     // === Sistem ve Başlangıç Ayarları ===
@@ -78,7 +78,7 @@ impl Default for Config {
             custom_platforms: vec![],
             custom_domains: vec![],
             custom_exes: vec![],
-            manage_dns: false,
+            manage_dns: true,
             auto_start_pc: true,
             start_minimized: true,
             auto_connect: true,
@@ -343,7 +343,10 @@ impl Engine {
         }
         self.child = Some(child);
 
-        // 4) Apply hosts-based poisoning bypass for Discord and Roblox
+        // 4) Apply clean DNS & hosts-based poisoning bypass for Discord and Roblox
+        if cfg.manage_dns {
+            dns::apply_dns(cfg, &self.dir);
+        }
         dns::apply_bypass_hosts(cfg);
 
         // 5) If Discord is enabled, ensure local Discord updater relay is active
@@ -379,12 +382,12 @@ impl Engine {
         // Clean hosts file bypass entries
         dns::clear_bypass_hosts();
 
+        // Restore network adapters to clean DHCP
+        dns::restore_dns(&self.dir);
+
         // Clean Discord settings & ensure system proxy is completely clean
         self.ensure_relay(false);
         proxy::clean_stale_proxy();
-
-        // Ensure network adapters are untouched
-        dns::recover(&self.dir);
 
         let _ = Command::new("sc")
             .args(["stop", "WinDivert"])
@@ -406,6 +409,7 @@ mod tests {
         assert!(cfg.auto_connect, "auto_connect must be true on fresh install");
         assert!(cfg.start_minimized, "start_minimized must be true on fresh install");
         assert!(cfg.minimize_to_tray, "minimize_to_tray must be true on fresh install");
+        assert!(cfg.manage_dns, "manage_dns must be true on fresh install");
     }
 
     #[test]
@@ -429,6 +433,7 @@ mod tests {
         assert!(cfg.auto_start_pc, "Missing auto_start_pc should default to true via serde");
         assert!(cfg.auto_connect, "Missing auto_connect should default to true via serde");
         assert!(cfg.start_minimized, "Missing start_minimized should default to true via serde");
+        assert!(cfg.manage_dns, "Missing manage_dns should default to true via serde");
     }
 
     #[test]
@@ -441,12 +446,14 @@ mod tests {
             "custom_exes": [],
             "hide_on_blur": false,
             "auto_update": false,
-            "auto_start_pc": false
+            "auto_start_pc": false,
+            "manage_dns": false
         }"#;
         let cfg: Config = serde_json::from_str(json_with_false).expect("Deserialization should succeed");
         assert!(!cfg.hide_on_blur, "Explicit false should be deserialized as false");
         assert!(!cfg.auto_update, "Explicit false should be deserialized as false");
         assert!(!cfg.auto_start_pc, "Explicit false should be deserialized as false");
+        assert!(!cfg.manage_dns, "Explicit false should be deserialized as false");
     }
 
     #[test]

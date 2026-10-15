@@ -147,7 +147,38 @@ pub fn apply_bypass_hosts(cfg: &Config) {
     flush();
 }
 
+/// Configures active network adapter DNS servers to fast clean public DNS (e.g. Cloudflare / Google / Quad9 / AdGuard)
+/// to completely defeat ISP DNS poisoning for Discord voice servers and other dynamic subdomains.
+/// Saves state file before modifying, and flushes DNS cache.
+pub fn apply_dns(cfg: &Config, dir: &Path) {
+    let state_file = dir.join(STATE_FILE);
+    let _ = fs::write(&state_file, "active");
+
+    let (primary, secondary) = match cfg.doh_provider.to_lowercase().as_str() {
+        "google" => ("8.8.8.8", "8.8.4.4"),
+        "quad9" => ("9.9.9.9", "149.112.112.112"),
+        "adguard" => ("94.140.14.140", "94.140.14.141"),
+        _ => ("1.1.1.1", "8.8.8.8"),
+    };
+
+    let script = format!(
+        r"Get-NetAdapter | Where-Object {{ $_.Status -eq 'Up' }} | ForEach-Object {{ Set-DnsClientServerAddress -InterfaceIndex $_.InterfaceIndex -ServerAddresses ('{primary}', '{secondary}') }}"
+    );
+    ps(&script);
+    flush();
+}
+
+/// Restores network adapter DNS to automatic DHCP, removes state file, and flushes DNS.
+pub fn restore_dns(dir: &Path) {
+    let state_file = dir.join(STATE_FILE);
+    if state_file.exists() {
+        let _ = fs::remove_file(state_file);
+    }
+    reset_all_adapters();
+}
+
 /// Restores any network adapter that was previously modified.
+#[allow(dead_code)]
 pub fn restore(state: &Path) {
     if state.exists() {
         let _ = fs::remove_file(state);
@@ -156,13 +187,13 @@ pub fn restore(state: &Path) {
     reset_all_adapters();
 }
 
-/// Startup recovery: ensures no leftover 127.0.0.1 remains on any network adapter,
+/// Startup recovery: ensures no leftover DNS or proxy remains on any network adapter,
 /// and cleans any stale hosts entries.
 pub fn recover(dir: &Path) {
     clear_bypass_hosts();
     let state = dir.join(STATE_FILE);
     if state.exists() {
-        restore(&state);
+        restore_dns(dir);
     }
 }
 
@@ -188,3 +219,4 @@ impl Dns {
     pub fn set_domains(&self, _d: Vec<String>) {}
     pub fn stop(&mut self) {}
 }
+
