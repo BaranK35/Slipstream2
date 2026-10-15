@@ -1,5 +1,5 @@
 {
-  "version": "0.1.3",
-  "notes": "Discord ses 'hat yok' (no route) sorunu ve joker DNS zehirlemesi giderildi, 30-40ms sıfır gecikme sağlandı, arayüz ferahlatıldı ve otomatik güncelleme arka planda çalışacak şekilde optimize edildi.",
-  "url": "https://github.com/Baran-K35/Slipstream/releases/download/v0.1.3/Slipstream-Setup.exe"
+  "version": "0.1.4",
+  "notes": "Roblox tüm web/istemci/CDN/captcha domainleri ve Anycast/Akamai IP yönlendirmeleri eklendi, Yandex DNS (77.88.8.8) desteği entegre edildi.",
+  "url": "https://github.com/BaranK35/Slipstreamtest2/releases/download/v0.1.4/Slipstream-Setup.exe"
 }

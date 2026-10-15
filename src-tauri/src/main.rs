@@ -489,8 +489,8 @@ async fn check_for_updates() -> UpdateInfo {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let version_urls = [
-        format!("https://raw.githubusercontent.com/Baran-K35/Slipstream/main/version.json?t={now_ts}"),
-        format!("https://github.com/Baran-K35/Slipstream/raw/main/version.json?t={now_ts}"),
+        format!("https://raw.githubusercontent.com/BaranK35/Slipstreamtest2/main/version.json?t={now_ts}"),
+        format!("https://github.com/BaranK35/Slipstreamtest2/raw/main/version.json?t={now_ts}"),
     ];
 
     for u in version_urls {
@@ -524,7 +524,7 @@ async fn check_for_updates() -> UpdateInfo {
 
     // 2) Fallback to GitHub Releases API (releases/latest)
     if let Ok(resp) = client
-        .get("https://api.github.com/repos/Baran-K35/Slipstream/releases/latest")
+        .get("https://api.github.com/repos/BaranK35/Slipstreamtest2/releases/latest")
         .header("Cache-Control", "no-cache")
         .header("Pragma", "no-cache")
         .send()
@@ -537,7 +537,7 @@ async fn check_for_updates() -> UpdateInfo {
                         let latest = tag.trim_start_matches('v').to_string();
                         let has = is_newer_version(&latest, &current_version);
                         let notes = json.get("body").and_then(|v| v.as_str()).unwrap_or("Yeni sürüm GitHub üzerinde yayınlandı.");
-                        let mut dl_url = format!("https://github.com/Baran-K35/Slipstream/releases/download/{tag}/Slipstream-Setup.exe");
+                        let mut dl_url = format!("https://github.com/BaranK35/Slipstreamtest2/releases/download/{tag}/Slipstream-Setup.exe");
                         if let Some(assets) = json.get("assets").and_then(|a| a.as_array()) {
                             for asset in assets {
                                 if let (Some(name), Some(browser_url)) = (
