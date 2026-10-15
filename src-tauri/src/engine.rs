@@ -506,4 +506,24 @@ mod tests {
         assert!(!args.iter().any(|a| a.contains("50000-65535")));
         assert!(!args.iter().any(|a| a.contains("--filter-l7=discord")));
     }
+
+    #[test]
+    fn test_roblox_domains_and_host_map() {
+        let mut cfg = Config::default();
+        cfg.enabled_apps = vec!["roblox".into()];
+        let domains = profiles::collect_domains(&cfg);
+        assert!(domains.contains(&"roblox.com".to_string()));
+        assert!(domains.contains(&"gamejoin.roblox.com".to_string()));
+        assert!(domains.contains(&"games.roblox.com".to_string()));
+        assert!(domains.contains(&"clientsettings.roblox.com".to_string()));
+        assert!(domains.contains(&"clientsettingscdn.roblox.com".to_string()));
+        assert!(domains.contains(&"assetdelivery.roblox.com".to_string()));
+        assert!(domains.contains(&"setup.rbxcdn.com".to_string()));
+        assert!(domains.contains(&"rbxcdn.com".to_string()));
+        assert!(domains.contains(&"rblx.co".to_string()));
+
+        // Also verify dns::ROBLOX_HOST_MAP includes gamejoin.roblox.com
+        let map_contains_gamejoin = dns::ROBLOX_HOST_MAP.iter().any(|(d, _)| *d == "gamejoin.roblox.com");
+        assert!(map_contains_gamejoin, "ROBLOX_HOST_MAP must include gamejoin.roblox.com to defeat ISP DNS poisoning");
+    }
 }
