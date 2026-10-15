@@ -1327,7 +1327,7 @@ export default function App() {
                   <button
                     className="secondary-btn"
                     style={{ padding: "6px 10px", fontSize: 11 }}
-                    onClick={() => invoke("open_url", { url: "https://github.com/Baran-K35/Slipstream/releases" })}
+                    onClick={() => invoke("open_url", { url: "https://github.com/BaranK35/Slipstreamtest2/releases" })}
                     title="GitHub Releases sayfasını aç"
                   >
                     GitHub
