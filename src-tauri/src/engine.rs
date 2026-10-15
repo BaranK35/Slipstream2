@@ -47,7 +47,7 @@ pub struct Config {
     pub manage_dns: bool,
 
     // === Sistem ve Başlangıç Ayarları ===
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub auto_start_pc: bool,
     #[serde(default = "default_true")]
     pub start_minimized: bool,
@@ -65,7 +65,7 @@ pub struct Config {
     pub gaming_mode: bool,
     #[serde(default = "default_true")]
     pub auto_healing: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub auto_update: bool,
 }
 
@@ -79,7 +79,7 @@ impl Default for Config {
             custom_domains: vec![],
             custom_exes: vec![],
             manage_dns: false,
-            auto_start_pc: false,
+            auto_start_pc: true,
             start_minimized: true,
             auto_connect: true,
             minimize_to_tray: true,
@@ -87,18 +87,33 @@ impl Default for Config {
             doh_provider: "cloudflare".into(),
             gaming_mode: false,
             auto_healing: true,
-            auto_update: false,
+            auto_update: true,
         }
     }
 }
 
 impl Config {
     pub fn load(dir: &PathBuf) -> Self {
-        let mut cfg: Self = fs::read_to_string(dir.join("config.json"))
+        let config_path = dir.join("config.json");
+        if !config_path.exists() {
+            // Fresh installation: initialize default configuration and register Windows autostart
+            let cfg = Self::default();
+            let _ = fs::create_dir_all(dir);
+            let _ = fs::write(
+                &config_path,
+                serde_json::to_string_pretty(&cfg).unwrap_or_default(),
+            );
+            if cfg.auto_start_pc {
+                let _ = set_windows_autostart(true);
+            }
+            return cfg;
+        }
+
+        // Existing configuration: preserve user settings strictly without resetting to defaults
+        let cfg: Self = fs::read_to_string(&config_path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        cfg.auto_start_pc = is_windows_autostart();
         cfg
     }
 
@@ -190,32 +205,12 @@ fn build_args(cfg: &Config, hosts: &PathBuf) -> Vec<String> {
             .as_deref()
             .unwrap_or_else(|| isp::order(&cfg.isp)[0]),
     );
-    let voice = profiles::needs_voice(cfg);
 
     let mut a = vec![];
     push(&mut a, &["--wf-tcp=80,443"]);
-    push(
-        &mut a,
-        &[if voice {
-            "--wf-udp=443,50000-50100"
-        } else {
-            "--wf-udp=443"
-        }],
-    );
-
-    // Discord voice discovery and STUN desync (lightweight, zero jitter, natural 40ms ping)
-    if voice {
-        push(
-            &mut a,
-            &[
-                "--filter-udp=50000-50100",
-                "--filter-l7=discord,stun",
-                "--dpi-desync=fake",
-                "--dpi-desync-repeats=1",
-                "--new",
-            ],
-        );
-    }
+    // Capture only UDP 443 for QUIC desync. Discord voice UDP (ports 19294-19344 & 50000-65535)
+    // passes directly through kernel with zero WinDivert overhead, zero STUN corruption, and 30-40ms native ping.
+    push(&mut a, &["--wf-udp=443"]);
 
     let hostlist_arg = format!("--hostlist={}", hosts.display());
 
@@ -324,8 +319,8 @@ impl Engine {
         let log = fs::File::create(self.dir.join("engine.log")).map_err(|e| e.to_string())?;
         let log2 = log.try_clone().map_err(|e| e.to_string())?;
 
-        // High priority class (0x0000_0080) for low latency gaming mode
-        let priority_flag = if cfg.gaming_mode { 0x0000_0080 } else { 0x0000_0020 };
+        // High priority class (0x0000_0080) for zero scheduling jitter and lowest latency packet reinjection
+        let priority_flag = 0x0000_0080;
         let creation_flags = 0x0800_0000 | priority_flag;
 
         // 3) Start winws packet engine at driver level
@@ -403,13 +398,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_config_fresh_install_defaults() {
+        let cfg = Config::default();
+        assert!(cfg.auto_update, "auto_update must be true on fresh install");
+        assert!(cfg.auto_start_pc, "auto_start_pc must be true on fresh install");
+        assert!(cfg.hide_on_blur, "hide_on_blur must be true on fresh install");
+        assert!(cfg.auto_connect, "auto_connect must be true on fresh install");
+        assert!(cfg.start_minimized, "start_minimized must be true on fresh install");
+        assert!(cfg.minimize_to_tray, "minimize_to_tray must be true on fresh install");
+    }
+
+    #[test]
     fn test_config_hide_on_blur_default() {
         let cfg = Config::default();
         assert!(cfg.hide_on_blur, "Config default hide_on_blur must be true");
     }
 
     #[test]
-    fn test_config_deserialize_missing_hide_on_blur() {
+    fn test_config_deserialize_missing_fields() {
         let json_without_field = r#"{
             "isp": "turk-telekom",
             "strategy": "fake-split-md5sig",
@@ -419,6 +425,10 @@ mod tests {
         }"#;
         let cfg: Config = serde_json::from_str(json_without_field).expect("Deserialization should succeed");
         assert!(cfg.hide_on_blur, "Missing hide_on_blur should default to true via serde");
+        assert!(cfg.auto_update, "Missing auto_update should default to true via serde");
+        assert!(cfg.auto_start_pc, "Missing auto_start_pc should default to true via serde");
+        assert!(cfg.auto_connect, "Missing auto_connect should default to true via serde");
+        assert!(cfg.start_minimized, "Missing start_minimized should default to true via serde");
     }
 
     #[test]
@@ -429,10 +439,14 @@ mod tests {
             "enabled_apps": ["discord"],
             "custom_domains": [],
             "custom_exes": [],
-            "hide_on_blur": false
+            "hide_on_blur": false,
+            "auto_update": false,
+            "auto_start_pc": false
         }"#;
         let cfg: Config = serde_json::from_str(json_with_false).expect("Deserialization should succeed");
         assert!(!cfg.hide_on_blur, "Explicit false should be deserialized as false");
+        assert!(!cfg.auto_update, "Explicit false should be deserialized as false");
+        assert!(!cfg.auto_start_pc, "Explicit false should be deserialized as false");
     }
 
     #[test]
@@ -443,5 +457,20 @@ mod tests {
         assert!(serialized.contains("\"hide_on_blur\":false"));
         let deserialized: Config = serde_json::from_str(&serialized).expect("Deserialization should succeed");
         assert!(!deserialized.hide_on_blur);
+    }
+
+    #[test]
+    fn test_discord_voice_args() {
+        let cfg = Config::default();
+        let hosts = PathBuf::from("hosts.txt");
+        let args = build_args(&cfg, &hosts);
+        assert!(args.contains(&"--wf-tcp=80,443".to_string()));
+        assert!(args.contains(&"--wf-udp=443".to_string()));
+        assert!(args.contains(&"--filter-tcp=80".to_string()));
+        assert!(args.contains(&"--filter-tcp=443".to_string()));
+        // Ensure voice UDP is NOT captured or mangled by winws so STUN succeeds with 30-40ms direct ping
+        assert!(!args.iter().any(|a| a.contains("19294")));
+        assert!(!args.iter().any(|a| a.contains("50000-65535")));
+        assert!(!args.iter().any(|a| a.contains("--filter-l7=discord")));
     }
 }

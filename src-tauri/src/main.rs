@@ -483,15 +483,19 @@ async fn check_for_updates() -> UpdateInfo {
         },
     };
 
-    // 1) Try raw version.json from raw.githubusercontent.com and github.com/raw
+    // 1) Try raw version.json from raw.githubusercontent.com and github.com/raw with cache-busting timestamp
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let version_urls = [
-        "https://raw.githubusercontent.com/Baran-K35/Slipstream/main/version.json",
-        "https://github.com/Baran-K35/Slipstream/raw/main/version.json",
+        format!("https://raw.githubusercontent.com/Baran-K35/Slipstream/main/version.json?t={now_ts}"),
+        format!("https://github.com/Baran-K35/Slipstream/raw/main/version.json?t={now_ts}"),
     ];
 
     for u in version_urls {
         if let Ok(resp) = client
-            .get(u)
+            .get(&u)
             .header("Cache-Control", "no-cache")
             .header("Pragma", "no-cache")
             .send()
@@ -1031,14 +1035,16 @@ fn main() {
 
             let _tray = tray_builder.build(app)?;
 
-            // Check if application was started with --minimized / --autostart flag
+            // Check if application was started with --minimized / --autostart flag or start_minimized setting
             let args: Vec<String> = std::env::args().collect();
             let is_minimized_arg = args.iter().any(|a| a == "--minimized" || a == "--autostart");
-            let should_show = !is_minimized_arg;
+            let should_start_minimized = is_minimized_arg || boot_cfg.start_minimized;
 
-            // Open window on launch in bottom right corner if not minimized
-            if should_show {
-                if let Some(w) = app.get_webview_window("main") {
+            // Manage initial window display according to start_minimized configuration
+            if let Some(w) = app.get_webview_window("main") {
+                if should_start_minimized {
+                    let _ = w.hide();
+                } else {
                     let _ = position_bottom_right(&w);
                     let _ = w.show();
                     let _ = w.set_focus();

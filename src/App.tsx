@@ -150,8 +150,6 @@ export default function App() {
   const [networkHealth, setNetworkHealth] = useState<NetworkHealth | null>(null);
   const [checkingHealth, setCheckingHealth] = useState(false);
 
-  // Per-platform latency cache: platformId -> latency in ms
-  const [platformLatencies, setPlatformLatencies] = useState<Record<string, number | "error" | "testing">>({});
 
   // Live Latency Radar
   const [latency, setLatency] = useState<LatencyStats>({
@@ -183,8 +181,8 @@ export default function App() {
     download_url: string;
   } | null>(null);
   const [updating, setUpdating] = useState(false);
+  const updatingRef = useRef(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [showEulaModal, setShowEulaModal] = useState(false);
 
   // Theme synchronization
@@ -235,10 +233,10 @@ export default function App() {
           invoke<boolean>("is_engine_on"),
         ]);
         setCat(c);
-        setCfg({
+        const initialCfg: Cfg = {
           ...loadedCfg,
           custom_platforms: loadedCfg.custom_platforms || [],
-          auto_start_pc: loadedCfg.auto_start_pc ?? false,
+          auto_start_pc: loadedCfg.auto_start_pc ?? true,
           start_minimized: loadedCfg.start_minimized ?? true,
           auto_connect: loadedCfg.auto_connect ?? true,
           minimize_to_tray: loadedCfg.minimize_to_tray ?? true,
@@ -246,11 +244,12 @@ export default function App() {
           doh_provider: loadedCfg.doh_provider || "cloudflare",
           gaming_mode: loadedCfg.gaming_mode ?? false,
           auto_healing: loadedCfg.auto_healing ?? true,
-          auto_update: loadedCfg.auto_update ?? false,
-        });
+          auto_update: loadedCfg.auto_update ?? true,
+        };
+        setCfg(initialCfg);
         setOn(engineState);
 
-        // Check for updates on boot
+        // Check for updates on boot immediately
         invoke<{
           has_update: boolean;
           current_version: string;
@@ -260,8 +259,8 @@ export default function App() {
         }>("check_for_updates")
           .then((info) => {
             setUpdateInfo(info);
-            if (info.has_update) {
-              setShowUpdateModal(true);
+            if (info.has_update && initialCfg.auto_update && info.download_url) {
+              handleApplyUpdate(info.download_url);
             }
           })
           .catch(() => {});
@@ -290,7 +289,7 @@ export default function App() {
     // Check initial Discord diagnosis
     invoke<DiscordDiagnosis>("diagnose_discord").then(setDiscordDiag).catch(() => {});
 
-    // Check for updates periodically in the background every 15 minutes
+    // Check for updates periodically in the background every 60 seconds (1 minute)
     const updateTimer = setInterval(() => {
       invoke<{
         has_update: boolean;
@@ -305,14 +304,12 @@ export default function App() {
             invoke<Cfg>("get_config").then((currentCfg) => {
               if (currentCfg.auto_update && info.download_url) {
                 handleApplyUpdate(info.download_url);
-              } else {
-                setShowUpdateModal(true);
               }
             });
           }
         })
         .catch(() => {});
-    }, 15 * 60 * 1000);
+    }, 60 * 1000);
 
     return () => {
       clearInterval(updateTimer);
@@ -671,18 +668,7 @@ export default function App() {
     }
   }
 
-  async function handleTestPlatform(id: string, probeUrl: string) {
-    setPlatformLatencies((prev) => ({ ...prev, [id]: "testing" }));
-    try {
-      const res = await invoke<number | null>("test_platform_latency", { host: probeUrl });
-      setPlatformLatencies((prev) => ({
-        ...prev,
-        [id]: res !== null ? res : "error",
-      }));
-    } catch {
-      setPlatformLatencies((prev) => ({ ...prev, [id]: "error" }));
-    }
-  }
+
 
   async function handleFlushDns() {
     try {
@@ -714,13 +700,10 @@ export default function App() {
       }>("check_for_updates");
       setUpdateInfo(info);
       if (info.has_update) {
-        if (!manual && cfg?.auto_update && info.download_url) {
+        if (cfg?.auto_update && info.download_url) {
           handleApplyUpdate(info.download_url);
-        } else {
-          setShowUpdateModal(true);
-          if (manual) {
-            setSuccessMsg(`🚀 Yeni sürüm bulundu: v${info.latest_version}`);
-          }
+        } else if (manual) {
+          setSuccessMsg(`🚀 Yeni sürüm bulundu: v${info.latest_version}`);
         }
       } else if (manual) {
         setSuccessMsg(`✅ En son sürümü (v${info.current_version}) kullanıyorsunuz. (GitHub ile senkronize)`);
@@ -732,8 +715,10 @@ export default function App() {
   }
 
   async function handleApplyUpdate(downloadUrl?: string) {
+    if (updatingRef.current) return;
     const url = downloadUrl || updateInfo?.download_url;
     if (!url) return;
+    updatingRef.current = true;
     setUpdating(true);
     setSuccessMsg("Güncelleme indiriliyor ve kuruluyor, uygulama yeniden başlatılacak...");
     try {
@@ -741,6 +726,7 @@ export default function App() {
     } catch (e) {
       setErr("Güncelleme yüklenemedi: " + String(e));
       setUpdating(false);
+      updatingRef.current = false;
     }
   }
 
@@ -844,18 +830,31 @@ export default function App() {
         {updateInfo?.has_update && (
           <div className="update-banner">
             <div className="update-content">
-              <span className="update-badge">YENİ SÜRÜM MEVCUT</span>
+              <span className="update-badge">
+                {cfg?.auto_update ? "⚡ OTOMATİK GÜNCELLEME" : "YENİ SÜRÜM MEVCUT"}
+              </span>
               <p className="update-text">
-                <b>v{updateInfo.latest_version}</b> hazır! {updateInfo.release_notes || "Gelişmiş stabilite ve yeni optimizasyonlar."}
+                <b>v{updateInfo.latest_version}</b> hazır!{" "}
+                {cfg?.auto_update
+                  ? (updating
+                      ? "Arka planda indiriliyor ve kuruluyor, uygulama yeniden başlatılacak..."
+                      : "Arka planda otomatik kuruluyor...")
+                  : (updateInfo.release_notes || "Gelişmiş stabilite ve yeni optimizasyonlar.")}
               </p>
             </div>
-            <button
-              className="update-action-btn"
-              onClick={() => handleApplyUpdate()}
-              disabled={updating}
-            >
-              {updating ? "İndiriliyor..." : "Şimdi Güncelle"}
-            </button>
+            {!cfg?.auto_update ? (
+              <button
+                className="update-action-btn"
+                onClick={() => handleApplyUpdate()}
+                disabled={updating}
+              >
+                {updating ? "İndiriliyor..." : "Şimdi Güncelle"}
+              </button>
+            ) : (
+              <span className="update-auto-tag">
+                {updating ? "⏳ İndiriliyor..." : "⚡ Otomatik"}
+              </span>
+            )}
           </div>
         )}
 
@@ -877,12 +876,13 @@ export default function App() {
 
           <div className="hero-status">
             <div className={`state-badge ${busy ? "busy" : on ? "on" : "off"}`}>
+              <span className={`status-dot ${busy ? "busy" : on ? "on" : "off"}`} />
               {busy ? "Ayarlanıyor..." : on ? "BYPASS AKTİF" : "KORUMA KAPALI"}
             </div>
             <p className="hero-subtitle">
               {on
-                ? "Sıfır Gecikme • 0 Ping • Doğrudan Paket Desync Aktif"
-                : "Açıldığında seçili platformlar ve oyunlar kesintisiz çalışır."}
+                ? "Sıfır Gecikme • Doğrudan UDP Ses & Kernel Desync"
+                : "Seçili servisler için tek tıkla korumayı başlatın."}
             </p>
           </div>
 
@@ -903,6 +903,7 @@ export default function App() {
               </span>
             </div>
             <div className="latency-badge zero-overhead" title="Yerel Proxy Yok - Doğrudan Hat Erişimi">
+              <span className="latency-dot zero" />
               <span className="latency-label">Ek Gecikme:</span>
               <span className="latency-val zero">0 ms</span>
             </div>
@@ -940,44 +941,21 @@ export default function App() {
         {/* TAB 1: SERVICES (Filtered + Search + Bulk Actions + Quick Ping) */}
         {activeTab === "services" && (
           <section className="tab-pane">
-            {/* Search Input */}
-            <div className="search-bar">
-              <input
-                className="search-input"
-                placeholder="🔍 Platform veya oyun ara..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-              {searchQuery && (
-                <button className="search-clear" onClick={() => setSearchQuery("")}>
-                  ✕
-                </button>
-              )}
-            </div>
-
-            {/* Category Filter Pills & Add Button */}
-            <div className="category-toolbar">
-              <div className="category-pills">
-                <button
-                  className={`pill-btn ${platformFilter === "all" ? "active" : ""}`}
-                  onClick={() => setPlatformFilter("all")}
-                >
-                  Tümü ({allPlatforms.length})
-                </button>
-                <button
-                  className={`pill-btn ${platformFilter === "apps" ? "active" : ""}`}
-                  onClick={() => setPlatformFilter("apps")}
-                >
-                  Uygulama ({appCount})
-                </button>
-                <button
-                  className={`pill-btn ${platformFilter === "games" ? "active" : ""}`}
-                  onClick={() => setPlatformFilter("games")}
-                >
-                  Oyun ({gameCount})
-                </button>
+            {/* Search + Add Platform Row */}
+            <div className="search-toolbar">
+              <div className="search-bar">
+                <input
+                  className="search-input"
+                  placeholder="🔍 Platform veya oyun ara..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <button className="search-clear" onClick={() => setSearchQuery("")}>
+                    ✕
+                  </button>
+                )}
               </div>
-
               <button
                 className="add-platform-btn"
                 onClick={() => setShowAddModal(true)}
@@ -987,50 +965,71 @@ export default function App() {
               </button>
             </div>
 
-            {/* Ready Preset Bundles */}
-            <div className="preset-bundles-row">
+            {/* Category Filter Pills */}
+            <div className="category-pills">
               <button
-                className="preset-chip"
-                onClick={() => applyPreset("gamer")}
-                title="Roblox, Steam, Epic Games, Riot (Valorant/LoL), Minecraft"
+                className={`pill-btn ${platformFilter === "all" ? "active" : ""}`}
+                onClick={() => setPlatformFilter("all")}
               >
-                🎮 Oyun Paketi
+                Tümü ({allPlatforms.length})
               </button>
               <button
-                className="preset-chip"
-                onClick={() => applyPreset("social")}
-                title="Discord, X, Meta, Telegram, Reddit, TikTok"
+                className={`pill-btn ${platformFilter === "apps" ? "active" : ""}`}
+                onClick={() => setPlatformFilter("apps")}
               >
-                💬 Sosyal & Sohbet
+                Uygulama ({appCount})
               </button>
               <button
-                className="preset-chip"
-                onClick={() => applyPreset("media")}
-                title="YouTube, Twitch, Kick, Spotify"
+                className={`pill-btn ${platformFilter === "games" ? "active" : ""}`}
+                onClick={() => setPlatformFilter("games")}
               >
-                📺 Yayın & Medya
-              </button>
-              <button
-                className="preset-chip"
-                onClick={() => applyPreset("all")}
-                title="Tüm platformları ve oyunları seç"
-              >
-                🌍 Tam Koruma
+                Oyun ({gameCount})
               </button>
             </div>
 
-            {/* Quick Bulk Selection Row */}
-            <div className="bulk-actions-row">
-              <button className="bulk-link-btn" onClick={() => toggleSelectAll(true)}>
+            {/* Quick Actions & Ready Preset Chips */}
+            <div className="quick-actions-bar">
+              <button
+                className="quick-chip"
+                onClick={selectPopular}
+                title="Discord, YouTube, Roblox"
+              >
+                ⭐ Popüler
+              </button>
+              <button
+                className="quick-chip"
+                onClick={() => applyPreset("gamer")}
+                title="Roblox, Steam, Epic Games, Riot, Minecraft"
+              >
+                🎮 Oyun
+              </button>
+              <button
+                className="quick-chip"
+                onClick={() => applyPreset("social")}
+                title="Discord, X, Meta, Telegram, Reddit, TikTok"
+              >
+                💬 Sosyal
+              </button>
+              <button
+                className="quick-chip"
+                onClick={() => applyPreset("media")}
+                title="YouTube, Twitch, Kick, Spotify"
+              >
+                📺 Medya
+              </button>
+              <button
+                className="quick-chip secondary"
+                onClick={() => toggleSelectAll(true)}
+                title="Tüm platformları seç"
+              >
                 Tümünü Seç
               </button>
-              <span className="bulk-sep">•</span>
-              <button className="bulk-link-btn" onClick={() => toggleSelectAll(false)}>
-                Kaldır
-              </button>
-              <span className="bulk-sep">•</span>
-              <button className="bulk-link-btn" onClick={selectPopular}>
-                Popüler (Discord, YouTube, Roblox)
+              <button
+                className="quick-chip secondary"
+                onClick={() => toggleSelectAll(false)}
+                title="Seçimleri kaldır"
+              >
+                Temizle
               </button>
             </div>
 
@@ -1043,7 +1042,6 @@ export default function App() {
               ) : (
                 filteredPlatforms.map((a) => {
                   const isChecked = cfg.enabled_apps.includes(a.id);
-                  const lat = platformLatencies[a.id];
 
                   return (
                     <div
@@ -1063,23 +1061,6 @@ export default function App() {
                       </div>
 
                       <div className="app-card-right">
-                        {/* Instant Ping Button / Badge */}
-                        <button
-                          className={`ping-pill ${lat === "testing" ? "testing" : lat === "error" ? "error" : lat ? "ok" : ""}`}
-                          title="Hızlı bağlantı ve gecikme testi"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleTestPlatform(a.id, a.probe);
-                          }}
-                        >
-                          {lat === "testing"
-                            ? "..."
-                            : lat === "error"
-                            ? "✕ Hata"
-                            : lat
-                            ? `⚡ ${lat}ms`
-                            : "⚡ Test"}
-                        </button>
 
                         {a.id === "discord" && isChecked && (
                           <button
@@ -1282,21 +1263,6 @@ export default function App() {
                 <div
                   className={`switch ${cfg.start_minimized ? "checked" : ""}`}
                   onClick={() => patch({ start_minimized: !cfg.start_minimized })}
-                >
-                  <div className="switch-thumb" />
-                </div>
-              </div>
-
-              <div className="pref-divider" />
-
-              <div className="pref-row">
-                <div className="pref-meta">
-                  <span className="pref-name">Tepsiye Küçültme Modu</span>
-                  <span className="pref-desc">Simge durumuna küçültüldüğünde uygulama sistem tepsisinde arka planda çalışmaya devam eder.</span>
-                </div>
-                <div
-                  className={`switch ${cfg.minimize_to_tray ? "checked" : ""}`}
-                  onClick={() => patch({ minimize_to_tray: !cfg.minimize_to_tray })}
                 >
                   <div className="switch-thumb" />
                 </div>
@@ -1842,64 +1808,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Update Prompt Modal */}
-      {showUpdateModal && updateInfo?.has_update && (
-        <div className="modal-overlay" onClick={() => setShowUpdateModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 380 }}>
-            <div className="modal-header">
-              <span className="modal-title">🚀 Yeni Güncelleme Mevcut!</span>
-              <button className="modal-close-btn" onClick={() => setShowUpdateModal(false)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <div style={{ textAlign: "center", marginBottom: 14 }}>
-                <div style={{ fontSize: 32, marginBottom: 6 }}>⚡</div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: "var(--cyan)" }}>
-                  Slipstream v{updateInfo.latest_version} Yayında!
-                </div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-                  Mevcut sürüm: v{updateInfo.current_version}
-                </div>
-              </div>
-              <div className="pref-card" style={{ background: "rgba(0,0,0,0.3)", padding: 10, borderRadius: 8, marginBottom: 12 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-dim)", display: "block", marginBottom: 4 }}>
-                  Sürüm Yenilikleri:
-                </span>
-                <p style={{ fontSize: 11, color: "var(--text-main)", margin: 0, lineHeight: 1.4 }}>
-                  {updateInfo.release_notes || "Performans optimizasyonları, ping düşüşü ve hata düzeltmeleri."}
-                </p>
-              </div>
-              <p style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", margin: 0 }}>
-                Şimdi güncellemek ister misiniz? Kurulum otomatik olarak tamamlanacak ve uygulama yeniden açılacaktır.
-              </p>
-            </div>
-            <div className="modal-footer" style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
-              <button
-                className="secondary-btn"
-                style={{ padding: "6px 10px", fontSize: 11 }}
-                onClick={() => invoke("open_url", { url: "https://github.com/Baran-K35/Slipstream/releases" })}
-              >
-                🔗 GitHub'da İncele
-              </button>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className="secondary-btn" onClick={() => setShowUpdateModal(false)}>
-                  Daha Sonra
-                </button>
-                <button
-                  className="primary-btn"
-                  style={{ background: "linear-gradient(135deg, #06b6d4, #8b5cf6)" }}
-                  onClick={() => {
-                    setShowUpdateModal(false);
-                    handleApplyUpdate();
-                  }}
-                  disabled={updating}
-                >
-                  {updating ? "İndiriliyor..." : "Şimdi Güncelle"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* Flyout Footer */}
       <footer className="footer">

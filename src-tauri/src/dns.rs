@@ -19,12 +19,12 @@ const HOSTS_TAG_END: &str = "# --- SLIPSTREAM BYPASS HOSTS END ---";
 // Real Cloudflare anycast IPs for Discord services (bypasses ISP poisoned DNS redirects)
 pub const DISCORD_HOST_MAP: &[(&str, &str)] = &[
     ("discord.com", "162.159.138.232"),
-    ("gateway.discord.gg", "162.159.133.234"),
+    ("gateway.discord.gg", "162.159.130.234"),
     ("status.discord.com", "162.159.138.232"),
     ("updates.discord.com", "162.159.138.232"),
     ("dl.discordapp.net", "162.159.138.232"),
     ("cdn.discordapp.com", "162.159.130.233"),
-    ("media.discordapp.net", "162.159.133.232"),
+    ("media.discordapp.net", "162.159.129.235"),
     ("images-ext-1.discordapp.net", "162.159.134.232"),
     ("images-ext-2.discordapp.net", "162.159.130.232"),
     ("attachments.discord.net", "162.159.135.232"),
@@ -47,7 +47,7 @@ pub const DISCORD_HOST_MAP: &[(&str, &str)] = &[
     ("discord.store", "162.159.138.232"),
     ("discord.tools", "162.159.138.232"),
     ("discord.design", "162.159.138.232"),
-    ("discord.media", "162.159.138.232"),
+    ("discord.media", "162.159.129.235"),
 ];
 
 // Real Anycast IPs for Roblox services

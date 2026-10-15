@@ -478,6 +478,7 @@ pub fn collect_domains(cfg: &Config) -> Vec<String> {
     set.into_iter().collect()
 }
 
+#[allow(dead_code)]
 pub fn needs_voice(cfg: &Config) -> bool {
     enabled(cfg).any(|p| p.voice)
 }
