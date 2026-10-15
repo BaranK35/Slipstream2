@@ -1,6 +1,8 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import { createRoot } from "react-dom/client";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import App from "./App";
+import ToastNotification from "./ToastNotification";
 import "./styles.css";
 
 interface Props {
@@ -49,10 +51,18 @@ class ErrorBoundary extends Component<Props, State> {
   }
 }
 
+let isToastWindow = false;
+try {
+  const currentWin = getCurrentWebviewWindow();
+  isToastWindow = currentWin.label === "toast" || window.location.search.includes("toast");
+} catch {
+  isToastWindow = window.location.search.includes("toast");
+}
+
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <App />
+      {isToastWindow ? <ToastNotification /> : <App />}
     </ErrorBoundary>
   </React.StrictMode>
 );

@@ -846,18 +846,104 @@ async fn autotune(
 
 /// Positions window in bottom-right corner of current work area (cleanly above taskbar).
 fn position_bottom_right(w: &WebviewWindow) -> Result<(), Box<dyn std::error::Error>> {
-    let monitor = w.current_monitor()?.or_else(|| w.primary_monitor().ok().flatten());
+    let monitor = w
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| w.primary_monitor().ok().flatten())
+        .or_else(|| w.available_monitors().ok().and_then(|v| v.into_iter().next()));
+
     if let Some(m) = monitor {
         let work_area = m.work_area();
         let scale = m.scale_factor();
-        let win_size = w.outer_size()?;
-        let margin_x = (20.0 * scale) as i32;
-        let margin_y = (56.0 * scale) as i32; // Elevated margin so window never overlaps the taskbar
-        let x = work_area.position.x + work_area.size.width as i32 - win_size.width as i32 - margin_x;
-        let y = work_area.position.y + work_area.size.height as i32 - win_size.height as i32 - margin_y;
-        w.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)))?;
+        
+        let (win_width, win_height) = match w.outer_size() {
+            Ok(s) if s.width > 50 && s.height > 50 => (s.width as i32, s.height as i32),
+            _ => ((380.0 * scale).round() as i32, (620.0 * scale).round() as i32),
+        };
+
+        let margin_x = (16.0 * scale).round() as i32;
+        let margin_y = (16.0 * scale).round() as i32;
+
+        let mut x = work_area.position.x + work_area.size.width as i32 - win_width - margin_x;
+        let mut y = work_area.position.y + work_area.size.height as i32 - win_height - margin_y;
+
+        if x < work_area.position.x {
+            x = work_area.position.x;
+        }
+        if y < work_area.position.y {
+            y = work_area.position.y;
+        }
+
+        let _ = w.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)));
     }
     Ok(())
+}
+
+/// Positions the toast notification window in the bottom-right corner directly above taskbar.
+fn position_toast_bottom_right(w: &WebviewWindow) -> Result<(), Box<dyn std::error::Error>> {
+    let monitor = w
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| w.primary_monitor().ok().flatten())
+        .or_else(|| w.available_monitors().ok().and_then(|v| v.into_iter().next()));
+
+    if let Some(m) = monitor {
+        let work_area = m.work_area();
+        let scale = m.scale_factor();
+
+        let (win_width, win_height) = match w.outer_size() {
+            Ok(s) if s.width > 50 && s.height > 20 => (s.width as i32, s.height as i32),
+            _ => ((360.0 * scale).round() as i32, (92.0 * scale).round() as i32),
+        };
+
+        let margin_x = (16.0 * scale).round() as i32;
+        let margin_y = (16.0 * scale).round() as i32;
+
+        let mut x = work_area.position.x + work_area.size.width as i32 - win_width - margin_x;
+        let mut y = work_area.position.y + work_area.size.height as i32 - win_height - margin_y;
+
+        if x < work_area.position.x {
+            x = work_area.position.x;
+        }
+        if y < work_area.position.y {
+            y = work_area.position.y;
+        }
+
+        let _ = w.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_main_from_toast(app: tauri::AppHandle) {
+    if let Some(toast_w) = app.get_webview_window("toast") {
+        let _ = toast_w.hide();
+    }
+    if let Some(main_w) = app.get_webview_window("main") {
+        let _ = position_bottom_right(&main_w);
+        let _ = main_w.show();
+        let _ = main_w.set_focus();
+    }
+}
+
+#[tauri::command]
+fn hide_toast_notification(app: tauri::AppHandle) {
+    if let Some(toast_w) = app.get_webview_window("toast") {
+        let _ = toast_w.hide();
+    }
+}
+
+#[tauri::command]
+fn show_toast_notification(app: tauri::AppHandle, message: Option<String>) {
+    if let Some(toast_w) = app.get_webview_window("toast") {
+        let _ = position_toast_bottom_right(&toast_w);
+        if let Some(ref msg) = message {
+            let _ = toast_w.emit("toast_message", msg.clone());
+        }
+        let _ = toast_w.show();
+    }
 }
 
 fn toggle_window(w: &WebviewWindow) {
@@ -952,6 +1038,9 @@ fn main() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle" => {
                         if let Some(w) = app.get_webview_window("main") {
+                            if let Some(toast_w) = app.get_webview_window("toast") {
+                                let _ = toast_w.hide();
+                            }
                             TRAY_CLICK_STARTED_OPEN.store(false, Ordering::SeqCst);
                             LAST_BLUR_HIDE_MS.store(0, Ordering::SeqCst);
                             toggle_window(&w);
@@ -1019,6 +1108,9 @@ fn main() {
                                         if started_open || (now - last_blur < 100) {
                                             return;
                                         }
+                                        if let Some(toast_w) = app.get_webview_window("toast") {
+                                            let _ = toast_w.hide();
+                                        }
                                         let _ = position_bottom_right(&w);
                                         let _ = w.show();
                                         let _ = w.set_focus();
@@ -1037,15 +1129,30 @@ fn main() {
 
             // Check if application was started with --minimized / --autostart flag or start_minimized setting
             let args: Vec<String> = std::env::args().collect();
-            let is_minimized_arg = args.iter().any(|a| a == "--minimized" || a == "--autostart");
+            let is_minimized_arg = args.iter().any(|a| a == "--minimized" || a == "--autostart" || a == "-silent");
             let should_start_minimized = is_minimized_arg || boot_cfg.start_minimized;
+
+            // Pre-position toast window while hidden
+            if let Some(toast_w) = app.get_webview_window("toast") {
+                let _ = position_toast_bottom_right(&toast_w);
+                let _ = toast_w.hide();
+            }
 
             // Manage initial window display according to start_minimized configuration
             if let Some(w) = app.get_webview_window("main") {
+                // Pre-position main window at bottom-right immediately so it NEVER appears on the left
+                let _ = position_bottom_right(&w);
+
                 if should_start_minimized {
                     let _ = w.hide();
+
+                    // Show animated background notification in bottom-right
+                    let app_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(900)).await;
+                        show_toast_notification(app_handle, None);
+                    });
                 } else {
-                    let _ = position_bottom_right(&w);
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
@@ -1067,9 +1174,11 @@ fn main() {
                         return;
                     }
                     if HIDE_ON_BLUR.load(Ordering::SeqCst) {
-                        if let Ok(true) = window.is_visible() {
-                            LAST_BLUR_HIDE_MS.store(now, Ordering::SeqCst);
-                            let _ = window.hide();
+                        if window.label() == "main" {
+                            if let Ok(true) = window.is_visible() {
+                                LAST_BLUR_HIDE_MS.store(now, Ordering::SeqCst);
+                                let _ = window.hide();
+                            }
                         }
                     }
                 }
@@ -1122,7 +1231,10 @@ fn main() {
             check_network_health,
             check_for_updates,
             apply_update,
-            open_url
+            open_url,
+            open_main_from_toast,
+            hide_toast_notification,
+            show_toast_notification
         ])
         .run(tauri::generate_context!())
         .expect("error while running Slipstream");
