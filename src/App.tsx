@@ -98,104 +98,8 @@ type NetworkHealth = {
   active_doh_provider: string;
 };
 
-let sharedAudioCtx: AudioContext | null = null;
-const preloadedBuffers: Record<string, AudioBuffer> = {};
-
-function initAudioSystem(): AudioContext | null {
-  try {
-    const AudioContextClass =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextClass) return null;
-
-    if (!sharedAudioCtx) {
-      sharedAudioCtx = new AudioContextClass({ latencyHint: "interactive" });
-
-      const sr = sharedAudioCtx.sampleRate;
-
-      // 1. Click buffer (subtle 16ms high-frequency tactile pop)
-      const clickSamples = Math.floor(sr * 0.018);
-      const clickBuf = sharedAudioCtx.createBuffer(1, clickSamples, sr);
-      const clickData = clickBuf.getChannelData(0);
-      for (let i = 0; i < clickSamples; i++) {
-        const t = i / sr;
-        clickData[i] = Math.sin(2 * Math.PI * 1600 * t) * Math.exp(-t * 260) * 0.08;
-      }
-      preloadedBuffers["click"] = clickBuf;
-
-      // 2. Toggle buffer (28ms mechanical switch click)
-      const toggleSamples = Math.floor(sr * 0.028);
-      const toggleBuf = sharedAudioCtx.createBuffer(1, toggleSamples, sr);
-      const toggleData = toggleBuf.getChannelData(0);
-      for (let i = 0; i < toggleSamples; i++) {
-        const t = i / sr;
-        toggleData[i] = Math.sin(2 * Math.PI * 1050 * t) * Math.exp(-t * 140) * 0.1;
-      }
-      preloadedBuffers["toggle"] = toggleBuf;
-
-      // 3. Power ON (smooth, warm upward dual chime)
-      const onSamples = Math.floor(sr * 0.18);
-      const onBuf = sharedAudioCtx.createBuffer(1, onSamples, sr);
-      const onData = onBuf.getChannelData(0);
-      for (let i = 0; i < onSamples; i++) {
-        const t = i / sr;
-        const freq = t < 0.08 ? 523.25 : 880.0;
-        const env = t < 0.14 ? 0.08 : 0.08 * (1 - (t - 0.14) / 0.04);
-        onData[i] = Math.sin(2 * Math.PI * freq * t) * env;
-      }
-      preloadedBuffers["on"] = onBuf;
-
-      // 4. Power OFF (smooth downward dual chime)
-      const offSamples = Math.floor(sr * 0.16);
-      const offBuf = sharedAudioCtx.createBuffer(1, offSamples, sr);
-      const offData = offBuf.getChannelData(0);
-      for (let i = 0; i < offSamples; i++) {
-        const t = i / sr;
-        const freq = t < 0.07 ? 880.0 : 440.0;
-        const env = (1 - t / 0.16) * 0.07;
-        offData[i] = Math.sin(2 * Math.PI * freq * t) * env;
-      }
-      preloadedBuffers["off"] = offBuf;
-
-      // Keep-alive silent node: keeps Windows WASAPI audio device permanently warm
-      try {
-        const silentOsc = sharedAudioCtx.createOscillator();
-        const silentGain = sharedAudioCtx.createGain();
-        silentGain.gain.value = 0.0;
-        silentOsc.connect(silentGain);
-        silentGain.connect(sharedAudioCtx.destination);
-        silentOsc.start();
-      } catch {}
-    }
-
-    if (sharedAudioCtx.state === "suspended") {
-      sharedAudioCtx.resume().catch(() => {});
-    }
-
-    return sharedAudioCtx;
-  } catch {
-    return null;
-  }
-}
-
 function playTone(type: "on" | "off" | "click" | "toggle") {
-  try {
-    const ctx = initAudioSystem();
-    if (!ctx) return;
-
-    if (ctx.state === "suspended") {
-      ctx.resume().catch(() => {});
-    }
-
-    const buf = preloadedBuffers[type];
-    if (buf) {
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      src.connect(ctx.destination);
-      src.start(0);
-      return;
-    }
-  } catch {}
+  invoke("play_sound", { sound: type }).catch(() => {});
 }
 
 type LatencyStats = {
@@ -383,7 +287,7 @@ export default function App() {
   }, [soundEnabled]);
 
   const getDisplayVersion = (rawVer?: string) => {
-    const v = (rawVer || "0.2.0").replace(/^v/, "");
+    const v = (rawVer || "0.2.1").replace(/^v/, "");
     const parts = v.split(/[.+]/);
     if (parts.length > 3) {
       return `${parts[0]}.${parts[1]}.${parts[2]}`;
@@ -415,18 +319,6 @@ export default function App() {
     return () => window.removeEventListener("focus", handleFocus);
   }, []);
 
-  // Pre-warm Web Audio immediately on first user interaction so latency is 0ms
-  useEffect(() => {
-    const warmAudio = () => {
-      initAudioSystem();
-    };
-    window.addEventListener("pointerdown", warmAudio, { passive: true });
-    window.addEventListener("keydown", warmAudio, { passive: true });
-    return () => {
-      window.removeEventListener("pointerdown", warmAudio);
-      window.removeEventListener("keydown", warmAudio);
-    };
-  }, []);
 
   // Initial Load
   useEffect(() => {
@@ -769,7 +661,7 @@ export default function App() {
             <img src={logoSvg} alt="Slipstream" className="brand-logo" />
             <div className="status-indicator busy" />
             <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
-            <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.2.0")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+            <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.2.1")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
           </div>
           <div className="window-controls">
             <button className="win-btn minimize" title={t.minimizeTitle} onClick={() => invoke("hide_window")}>
@@ -1283,7 +1175,7 @@ export default function App() {
           <img src={logoSvg} alt="Slipstream" className="brand-logo" />
           <div className={`status-indicator ${busy ? "busy" : on ? "active" : "inactive"}`} />
           <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
-          <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.2.0")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+          <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.2.1")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
           {isPortable && <span className="portable-pill" title={t.portableTitle}>{t.portableTag}</span>}
         </div>
         <div className="window-controls">
@@ -1968,7 +1860,7 @@ export default function App() {
                     <div className="pref-meta">
                       <span className="pref-name">{t.versionCheckLabel}</span>
                       <span className="pref-desc">
-                        {t.currentVersionPrefix} v{updateInfo?.current_version || "0.2.0"}
+                        {t.currentVersionPrefix} v{updateInfo?.current_version || "0.2.1"}
                         {updateInfo?.has_update ? (
                           <span style={{ color: "var(--cyan)", fontWeight: 600, marginLeft: 6 }}>
                             {t.newVersionLiveTag(updateInfo.latest_version)}

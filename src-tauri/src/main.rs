@@ -5,6 +5,7 @@ mod engine;
 mod isp;
 mod profiles;
 mod proxy;
+mod sound;
 
 use engine::{Config, Engine};
 use serde_json::json;
@@ -154,6 +155,11 @@ fn hide_window(window: WebviewWindow) {
 #[tauri::command]
 fn is_window_visible(window: WebviewWindow) -> bool {
     window.is_visible().unwrap_or(false)
+}
+
+#[tauri::command]
+fn play_sound(sound: String) {
+    sound::play(&sound);
 }
 
 #[tauri::command]
@@ -1933,7 +1939,8 @@ fn main() {
             pick_exe_file,
             set_window_expanded,
             refresh_game_priorities,
-            is_window_visible
+            is_window_visible,
+            play_sound
         ])
         .build(tauri::generate_context!())
         .expect("error while building Slipstream")
@@ -2006,8 +2013,10 @@ mod tests {
     fn test_v020_version_upgrade() {
         assert!(is_newer_version("0.2.0", "0.1.9"));
         assert!(is_newer_version("v0.2.0", "v0.1.9"));
-        assert!(!is_newer_version("0.1.9", "0.2.0"));
-        assert!(!is_newer_version("0.2.0", "0.2.0"));
+        assert!(is_newer_version("0.2.1", "0.2.0"));
+        assert!(is_newer_version("v0.2.1", "v0.2.0"));
+        assert!(!is_newer_version("0.2.0", "0.2.1"));
+        assert!(!is_newer_version("0.2.1", "0.2.1"));
     }
 
     #[test]
