@@ -46,7 +46,8 @@
         "startMenuFolder": "Slipstream",
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
-        "languages": ["Turkish", "English"],
+        "languages": ["English", "Turkish"],
+        "displayLanguageSelector": true,
         "customLanguageFiles": {
           "Turkish": "resources/Turkish.nsh"
         }

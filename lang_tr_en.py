@@ -39,7 +39,7 @@ TR = {
     "heroPitchOff": "Seçili servisler için tek tıkla korumayı başlatın.",
 
     # Ping Radar
-    "discordPingTitle": "Discord bağlantı gecikmesi",
+    "discordPingTitle": "Discord CDN/API sunucusu gecikmesi (Ses odaları Frankfurt/Rotterdam merkezlidir: ~60-80ms)",
     "discordPing": "Discord:",
     "dohDnsTitle": "Cloudflare DoH gecikmesi",
     "dohDns": "DoH DNS:",
@@ -128,7 +128,7 @@ TR = {
     "hideOnBlurDesc": "Başka bir pencereye veya masaüstüne tıklandığında pencereyi otomatik sistem tepsisine küçültür.",
     "liveDetectionSectionTitle": "⚡ Canlı Oyun & Süreç Tanıma",
     "processDetectionLabel": "Otomatik Süreç & Oyun Algılama",
-    "dynamicBadge": "OTOMATİK",
+    "dynamicBadge": "",
     "processDetectionDesc": "Eklediğiniz veya seçtiğiniz oyun/uygulamaların tiki açıksa, çalıştıkları an otomatik algılanır ve tüm internet trafiği doğrudan koruma tünelinden geçirilir.",
     "detectedProcessesTitle": "Canlı Algılanan Aktif Süreçler:",
     "processRunningTag": lambda name: f"🟢 {name} (Çalışıyor)",
@@ -385,7 +385,7 @@ EN = {
     "heroPitchOff": "One-click protection for selected platforms.",
 
     # Ping Radar
-    "discordPingTitle": "Discord voice ping latency",
+    "discordPingTitle": "Discord CDN/API server latency (Voice channels are hosted in Frankfurt/Rotterdam: ~60-80ms)",
     "discordPing": "Discord:",
     "dohDnsTitle": "Cloudflare DoH latency",
     "dohDns": "DoH DNS:",
@@ -474,7 +474,7 @@ EN = {
     "hideOnBlurDesc": "Minimizes the flyout window automatically when clicking outside.",
     "liveDetectionSectionTitle": "⚡ Live Game & Process Detection",
     "processDetectionLabel": "Automatic Process & Game Detection",
-    "dynamicBadge": "AUTOMATIC",
+    "dynamicBadge": "",
     "processDetectionDesc": "When toggled on for an app or game, it is automatically detected upon launch and all of its network traffic is routed through the protection tunnel.",
     "detectedProcessesTitle": "Currently Detected Active Processes:",
     "processRunningTag": lambda name: f"🟢 {name} (Running)",

@@ -127,9 +127,9 @@ export default function App() {
       if (saved && LANGUAGES.some((l) => l.code === saved)) {
         return saved;
       }
-      return "tr";
+      return "en";
     } catch {
-      return "tr";
+      return "en";
     }
   });
 
@@ -145,7 +145,7 @@ export default function App() {
     }
   }, [lang, isRtl]);
 
-  const t = translations[lang] || translations.tr;
+  const t = translations[lang] || translations.en;
 
   // Appearance, Themes & Personalization
   type ThemeId = "cyber" | "erkek" | "amoled" | "emerald" | "crimson" | "violet" | "frost";
@@ -226,6 +226,10 @@ export default function App() {
   const lastUpdateAttemptRef = useRef<number>(0);
   const busyRef = useRef<boolean>(false);
 
+  // Custom Language Picker dropdown
+  const [isLangMenuOpen, setIsLangMenuOpen] = useState(false);
+  const langMenuRef = useRef<HTMLDivElement>(null);
+
   // Add Platform Modal state
   const [showAddModal, setShowAddModal] = useState(false);
   const [addModalTab, setAddModalTab] = useState<"scan" | "manual">("scan");
@@ -285,6 +289,17 @@ export default function App() {
       localStorage.setItem("slipstream_sound", String(soundEnabled));
     } catch {}
   }, [soundEnabled]);
+
+  useEffect(() => {
+    if (!isLangMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (langMenuRef.current && !langMenuRef.current.contains(e.target as Node)) {
+        setIsLangMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isLangMenuOpen]);
 
   const getDisplayVersion = (rawVer?: string) => {
     const v = (rawVer || "0.2.1").replace(/^v/, "");
@@ -1809,7 +1824,6 @@ export default function App() {
                     <div className="pref-meta">
                       <div className="pref-badge-row">
                         <span className="pref-name">{t.processDetectionLabel}</span>
-                        {t.dynamicBadge && <span className="pill-badge pill-cyan">{t.dynamicBadge}</span>}
                       </div>
                       <span className="pref-desc">
                         {t.processDetectionDesc}
@@ -1909,6 +1923,65 @@ export default function App() {
                         {checkingUpdates ? t.checkingUpdatesText : t.checkUpdatesBtn}
                       </button>
                     </div>
+                  </div>
+                </div>
+
+                {/* Dil Seçimi / Language Selector */}
+                <div className="pref-section-title">🌐 {t.languageSectionTitle}</div>
+                <div className="pref-card" ref={langMenuRef}>
+                  <div className="pref-row" style={{ alignItems: "center" }}>
+                    <div className="pref-meta">
+                      <span className="pref-name">{t.languageLabel}</span>
+                      <span className="pref-desc">{t.languageDesc}</span>
+                    </div>
+                  </div>
+
+                  <div className="custom-lang-container">
+                    <button
+                      type="button"
+                      className={`custom-lang-trigger ${isLangMenuOpen ? "open" : ""}`}
+                      onClick={() => {
+                        if (soundEnabled) playTone("click");
+                        setIsLangMenuOpen(!isLangMenuOpen);
+                      }}
+                    >
+                      <div className="custom-lang-current">
+                        <span className="custom-lang-flag">{LANGUAGES.find((l) => l.code === lang)?.flag || "🌐"}</span>
+                        <div className="custom-lang-labels">
+                          <span className="custom-lang-native">{LANGUAGES.find((l) => l.code === lang)?.nativeName}</span>
+                          <span className="custom-lang-sub">({LANGUAGES.find((l) => l.code === lang)?.name})</span>
+                        </div>
+                      </div>
+                      <span className={`custom-lang-chevron ${isLangMenuOpen ? "open" : ""}`}>▾</span>
+                    </button>
+
+                    {isLangMenuOpen && (
+                      <div className="custom-lang-dropdown">
+                        <div className="custom-lang-grid">
+                          {LANGUAGES.map((l) => {
+                            const isSelected = l.code === lang;
+                            return (
+                              <div
+                                key={l.code}
+                                className={`custom-lang-item ${isSelected ? "selected" : ""}`}
+                                onClick={() => {
+                                  if (soundEnabled) playTone("click");
+                                  setLang(l.code);
+                                  setIsLangMenuOpen(false);
+                                }}
+                              >
+                                <span className="custom-lang-flag">{l.flag}</span>
+                                <div className="custom-lang-item-names">
+                                  <span className="custom-lang-item-native">{l.nativeName}</span>
+                                  <span className="custom-lang-item-en">{l.name}</span>
+                                </div>
+                                {isSelected && <span className="custom-lang-check">✓</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -2050,31 +2123,6 @@ export default function App() {
             {/* SUBTAB 3: KİŞİSELLEŞTİRME */}
             {prefSubTab === "kisisellestir" && (
               <>
-                {/* Dil Seçimi / Language Selector */}
-                <div className="pref-section-title">{t.languageSectionTitle}</div>
-                <div className="pref-card">
-                  <div className="field-group" style={{ marginBottom: 0 }}>
-                    <label className="field-label" style={{ marginBottom: 6 }}>{t.languageLabel}</label>
-                    <select
-                      className="select-input"
-                      value={lang}
-                      onChange={(e) => {
-                        if (soundEnabled) playTone("click");
-                        setLang(e.target.value as LangCode);
-                      }}
-                    >
-                      {LANGUAGES.map((l) => (
-                        <option key={l.code} value={l.code}>
-                          {l.flag} {l.nativeName} ({l.name})
-                        </option>
-                      ))}
-                    </select>
-                    <span className="field-hint" style={{ marginTop: 6 }}>
-                      {t.languageDesc}
-                    </span>
-                  </div>
-                </div>
-
                 {/* Görsel Temalar */}
                 <div className="pref-section-title">{t.visualThemesSectionTitle}</div>
                 <div className="pref-card">

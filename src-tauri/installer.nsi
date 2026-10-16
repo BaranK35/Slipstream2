@@ -52,7 +52,7 @@ ${StrLoc}
 !define ARCH "x64"
 !define ADDITIONALPLUGINSPATH "C:\Users\Administrator\AppData\Local\tauri\NSIS\Plugins\x86-unicode\additional"
 !define ALLOWDOWNGRADES "true"
-!define DISPLAYLANGUAGESELECTOR "false"
+!define DISPLAYLANGUAGESELECTOR "true"
 !define INSTALLWEBVIEW2MODE "downloadBootstrapper"
 !define WEBVIEW2INSTALLERARGS "/silent"
 !define WEBVIEW2BOOTSTRAPPERPATH ""
@@ -473,11 +473,11 @@ FunctionEnd
 !insertmacro MUI_UNPAGE_INSTFILES
 
 ;Languages
-!insertmacro MUI_LANGUAGE "Turkish"
 !insertmacro MUI_LANGUAGE "English"
+!insertmacro MUI_LANGUAGE "Turkish"
 !insertmacro MUI_RESERVEFILE_LANGDLL
-  !include "C:\Users\Administrator\Downloads\slipstream\slipstream\src-tauri\target\release\nsis\x64\Turkish.nsh"
   !include "C:\Users\Administrator\Downloads\slipstream\slipstream\src-tauri\target\release\nsis\x64\English.nsh"
+  !include "C:\Users\Administrator\Downloads\slipstream\slipstream\src-tauri\target\release\nsis\x64\Turkish.nsh"
 
 Function .onInit
   ${GetOptions} $CMDLINE "/P" $PassiveMode

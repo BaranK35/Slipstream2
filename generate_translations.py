@@ -11,8 +11,8 @@ from lang_asia import ZH, JA, KO
 from lang_ar_id import AR, ID
 
 LANGUAGES = [
-    {"code": "tr", "name": "Turkish", "nativeName": "Türkçe", "flag": "🇹🇷", "dict": TR},
     {"code": "en", "name": "English", "nativeName": "English", "flag": "🇺🇸", "dict": EN},
+    {"code": "tr", "name": "Turkish", "nativeName": "Türkçe", "flag": "🇹🇷", "dict": TR},
     {"code": "de", "name": "German", "nativeName": "Deutsch", "flag": "🇩🇪", "dict": DE},
     {"code": "fr", "name": "French", "nativeName": "Français", "flag": "🇫🇷", "dict": FR},
     {"code": "es", "name": "Spanish", "nativeName": "Español", "flag": "🇪🇸", "dict": ES},
