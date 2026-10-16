@@ -1664,6 +1664,11 @@ fn main() {
             MINIMIZE_TO_TRAY.store(boot_cfg.minimize_to_tray, Ordering::SeqCst);
             let has_discord = boot_cfg.enabled_apps.contains(&"discord".to_string());
 
+            // Ensure Windows startup registry path points to current executable location (e.g. if portable was moved)
+            if boot_cfg.auto_start_pc {
+                let _ = engine::set_windows_autostart(true);
+            }
+
             Engine::kill_all_winws();
             let mut engine = Engine::new(dir, bin);
             engine.ensure_relay(has_discord);
