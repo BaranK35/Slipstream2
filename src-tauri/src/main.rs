@@ -34,6 +34,7 @@ static TRAY_CLICK_STARTED_FOCUSED: AtomicBool = AtomicBool::new(false);
 static IS_WINDOW_EXPANDED: AtomicBool = AtomicBool::new(false);
 static COLLAPSED_ORIGIN_X: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(i32::MIN);
 static SINGLE_INSTANCE_MUTEX: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static LAST_APPLY_UPDATE_MS: AtomicI64 = AtomicI64::new(0);
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -901,7 +902,7 @@ fn resolve_install_paths() -> (PathBuf, PathBuf) {
     (target_exe, install_dir)
 }
 
-const APP_VERSION: &str = "0.2.0";
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tauri::command]
 async fn check_for_updates() -> UpdateInfo {
@@ -1058,6 +1059,13 @@ async fn apply_update(app: tauri::AppHandle, s: State<'_, AppState>, download_ur
     if download_url.is_empty() {
         return Err("Geçerli bir indirme bağlantısı bulunamadı.".into());
     }
+
+    let now = now_ms();
+    let last = LAST_APPLY_UPDATE_MS.load(Ordering::SeqCst);
+    if last > 0 && (now - last) < 180_000 {
+        return Err("Güncelleme işlemi çok yakın zamanda başlatıldı. Lütfen bekleyin.".into());
+    }
+    LAST_APPLY_UPDATE_MS.store(now, Ordering::SeqCst);
 
     let client = reqwest::Client::builder()
         .user_agent("Slipstream-Updater/1.0")

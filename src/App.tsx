@@ -357,7 +357,7 @@ export default function App() {
           .then(setDetectedProcesses)
           .catch(() => {});
 
-        // Check for updates on boot immediately with cooldown protection
+        // Check for updates on boot immediately with persistent cooldown protection
         invoke<{
           has_update: boolean;
           current_version: string;
@@ -368,8 +368,21 @@ export default function App() {
           .then((info) => {
             setUpdateInfo(info);
             if (info.has_update && initialCfg.auto_update && info.download_url) {
+              const LAST_UPDATE_KEY = "slipstream_last_auto_update_ts";
+              const LAST_UPDATE_VER_KEY = "slipstream_last_auto_update_ver";
+              const lastAttempt = Number(localStorage.getItem(LAST_UPDATE_KEY) || "0");
+              const lastAttemptVer = localStorage.getItem(LAST_UPDATE_VER_KEY) || "";
               const now = Date.now();
-              if (now - lastUpdateAttemptRef.current > 15 * 60 * 1000) {
+
+              // Prevent infinite update loop:
+              // 1) Never auto-update to the same target version more than once within 2 hours
+              // 2) Never trigger auto-update within 30 minutes of any previous auto-update
+              const isSameVersionRecent = lastAttemptVer === info.latest_version && (now - lastAttempt < 2 * 60 * 60 * 1000);
+              const isRecentAttempt = (now - lastAttempt < 30 * 60 * 1000);
+
+              if (!isSameVersionRecent && !isRecentAttempt) {
+                localStorage.setItem(LAST_UPDATE_KEY, String(now));
+                localStorage.setItem(LAST_UPDATE_VER_KEY, info.latest_version);
                 handleApplyUpdate(info.download_url);
               }
             }
@@ -1082,7 +1095,14 @@ export default function App() {
     if (updatingRef.current) return;
     const url = downloadUrl || updateInfo?.download_url;
     if (!url) return;
-    lastUpdateAttemptRef.current = Date.now();
+    const now = Date.now();
+    lastUpdateAttemptRef.current = now;
+    try {
+      localStorage.setItem("slipstream_last_auto_update_ts", String(now));
+      if (updateInfo?.latest_version) {
+        localStorage.setItem("slipstream_last_auto_update_ver", updateInfo.latest_version);
+      }
+    } catch {}
     updatingRef.current = true;
     setUpdating(true);
     setSuccessMsg(t.suc_updatingNotice);
