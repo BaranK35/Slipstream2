@@ -1,6 +1,5 @@
 {
-  "version": "0.1.6.1",
-  "notes": "v0.1.6.1 Altyapı ve Sunucu Yaması:\n- Slipstream2 GitHub Depo Geçişi: Tüm sunucu ve güncelleme yolları başarıyla bağlandı.\n- Kompakt Güncelleme Çubuğu & Ayrıntılar Penceresi: Bildirim alanı sadeleştirildi, yenilik detayları ayrı pencereye taşındı.\n- Açık & Kapalı Süreç Algılama, 0ms Gecikmesiz Ses Motoru ve Hızlı Kapanma optimizasyonları.",
-  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.1.6.1/Slipstream_0.1.6.1_x64-setup.exe"
+  "version": "0.1.7",
+  "notes": "v0.1.7 Güncellemesi:\n- Yeni Platform / Oyun Ekle penceresi sola doğru dışa taşan ferah 820px dikdörtgen tasarıma kavuşturuldu.\n- 2 sütunlu modern uygulama ızgarası ve rahat arama/seçim düzeni.\n- Windows beyaz kaydırma çubukları yerine özel karanlık siber kaydırma çubukları eklendi.",
+  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.1.7/Slipstream_0.1.7_x64-setup.exe"
 }
-

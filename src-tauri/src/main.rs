@@ -822,7 +822,7 @@ fn resolve_install_paths() -> (PathBuf, PathBuf) {
     (target_exe, install_dir)
 }
 
-const APP_VERSION: &str = "0.1.6.1";
+const APP_VERSION: &str = "0.1.7";
 
 #[tauri::command]
 async fn check_for_updates() -> UpdateInfo {

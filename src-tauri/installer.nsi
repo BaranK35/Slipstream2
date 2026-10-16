@@ -34,8 +34,8 @@ ${StrLoc}
 
 !define MANUFACTURER "slipstream"
 !define PRODUCTNAME "Slipstream"
-!define VERSION "0.1.6+1"
-!define VERSIONWITHBUILD "0.1.6.1"
+!define VERSION "0.1.7"
+!define VERSIONWITHBUILD "0.1.7.0"
 !define HOMEPAGE ""
 !define INSTALLMODE "currentUser"
 !define LICENSE "C:\Users\Administrator\Downloads\slipstream\slipstream\src-tauri\target\release\nsis\x64\license_file"
