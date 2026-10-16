@@ -1809,7 +1809,7 @@ export default function App() {
                     <div className="pref-meta">
                       <div className="pref-badge-row">
                         <span className="pref-name">{t.processDetectionLabel}</span>
-                        <span className="pill-badge pill-cyan">{t.dynamicBadge}</span>
+                        {t.dynamicBadge && <span className="pill-badge pill-cyan">{t.dynamicBadge}</span>}
                       </div>
                       <span className="pref-desc">
                         {t.processDetectionDesc}
