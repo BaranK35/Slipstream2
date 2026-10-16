@@ -455,12 +455,13 @@ fn manage_game_process_priorities(cfg: &Config, running_procs: &[ProcessItem]) {
     // Boost running game processes
     for proc in running_procs {
         let lower = proc.name.to_lowercase();
-        if game_exes.contains(&lower) && !forbidden_exes.contains(&lower) {
-            if !boosted.contains(&proc.pid) {
-                // Apply HIGH_PRIORITY_CLASS (0x00000080)
-                if set_process_priority(proc.pid, 0x0000_0080) {
-                    boosted.insert(proc.pid);
-                }
+        if game_exes.contains(&lower)
+            && !forbidden_exes.contains(&lower)
+            && !boosted.contains(&proc.pid)
+        {
+            // Apply HIGH_PRIORITY_CLASS (0x00000080)
+            if set_process_priority(proc.pid, 0x0000_0080) {
+                boosted.insert(proc.pid);
             }
         }
     }
@@ -822,7 +823,7 @@ fn resolve_install_paths() -> (PathBuf, PathBuf) {
     (target_exe, install_dir)
 }
 
-const APP_VERSION: &str = "0.1.8";
+const APP_VERSION: &str = "0.1.9";
 
 #[tauri::command]
 async fn check_for_updates() -> UpdateInfo {
@@ -1521,10 +1522,8 @@ fn main() {
                             let cfg = Config::load(&eng.dir);
 
                             // 1) Auto-healing watchdog
-                            if cfg.auto_healing && eng.is_on() {
-                                if eng.check_health(&cfg) {
-                                    let _ = app_handle.emit("watchdog_recovery", "Motor arka planda otomatik onarıldı.");
-                                }
+                            if cfg.auto_healing && eng.is_on() && eng.check_health(&cfg) {
+                                let _ = app_handle.emit("watchdog_recovery", "Motor arka planda otomatik onarıldı.");
                             }
 
                             let running_procs = get_running_processes();
@@ -1780,12 +1779,10 @@ fn main() {
                     if FILE_DIALOG_ACTIVE.load(Ordering::SeqCst) {
                         return;
                     }
-                    if HIDE_ON_BLUR.load(Ordering::SeqCst) {
-                        if window.label() == "main" {
-                            if let Ok(true) = window.is_visible() {
-                                LAST_BLUR_HIDE_MS.store(now, Ordering::SeqCst);
-                                let _ = window.hide();
-                            }
+                    if HIDE_ON_BLUR.load(Ordering::SeqCst) && window.label() == "main" {
+                        if let Ok(true) = window.is_visible() {
+                            LAST_BLUR_HIDE_MS.store(now, Ordering::SeqCst);
+                            let _ = window.hide();
                         }
                     }
                 }

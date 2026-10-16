@@ -34,10 +34,12 @@ const INTERNET_OPTION_SETTINGS_CHANGED: u32 = 39;
 
 pub const DISCORD_RELAY_PORT: u16 = 18809;
 
+type DnsCache = Mutex<HashMap<String, (Vec<Ipv4Addr>, Instant)>>;
+
 // In-memory DNS cache: host -> (IPs, expiration)
-fn get_dns_cache() -> &'static Mutex<HashMap<String, (Vec<Ipv4Addr>, Instant)>> {
+fn get_dns_cache() -> &'static DnsCache {
     use std::sync::OnceLock;
-    static CACHE: OnceLock<Mutex<HashMap<String, (Vec<Ipv4Addr>, Instant)>>> = OnceLock::new();
+    static CACHE: OnceLock<DnsCache> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -411,8 +413,7 @@ pub async fn run_discord_relay(stop: Arc<AtomicBool>, port: u16) {
                 return;
             }
 
-            let (target_host, target_path) = if raw_path.starts_with("/__h/") {
-                let rest = &raw_path[5..];
+            let (target_host, target_path) = if let Some(rest) = raw_path.strip_prefix("/__h/") {
                 if let Some(slash_idx) = rest.find('/') {
                     (&rest[..slash_idx], &rest[slash_idx..])
                 } else {

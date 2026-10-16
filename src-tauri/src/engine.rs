@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs,
     os::windows::process::CommandExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -77,6 +77,10 @@ pub struct Config {
     // === Canlı Oyun & Uygulama Algılayıcı ===
     #[serde(default)]
     pub process_detection_mode: bool,
+
+    // === Yapılandırma ve Varsayılan Sürümü (Tek seferlik geçişler için) ===
+    #[serde(default)]
+    pub app_defaults_version: u32,
 }
 
 impl Default for Config {
@@ -84,7 +88,7 @@ impl Default for Config {
         Self {
             isp: "turk-telekom".into(),
             strategy: Some("fake-split-md5sig".into()),
-            enabled_apps: vec!["discord".into(), "youtube".into(), "roblox".into()],
+            enabled_apps: vec!["discord".into(), "roblox".into()],
             custom_platforms: vec![],
             custom_domains: vec![],
             custom_exes: vec![],
@@ -100,6 +104,7 @@ impl Default for Config {
             auto_healing: true,
             auto_update: true,
             process_detection_mode: false,
+            app_defaults_version: 1,
         }
     }
 }
@@ -122,10 +127,29 @@ impl Config {
         }
 
         // Existing configuration: preserve user settings strictly without resetting to defaults
-        let cfg: Self = fs::read_to_string(&config_path)
+        let mut cfg: Self = fs::read_to_string(&config_path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
+
+        // One-time migration for existing users:
+        // Set default enabled apps to strictly ["discord", "roblox"] + preserve any custom platforms
+        if cfg.app_defaults_version < 1 {
+            let custom_ids: Vec<String> = cfg.custom_platforms.iter().map(|p| p.id.clone()).collect();
+            let mut new_enabled = vec!["discord".to_string(), "roblox".to_string()];
+            for cid in custom_ids {
+                if cfg.enabled_apps.contains(&cid) && !new_enabled.contains(&cid) {
+                    new_enabled.push(cid);
+                }
+            }
+            cfg.enabled_apps = new_enabled;
+            cfg.app_defaults_version = 1;
+            let _ = fs::write(
+                &config_path,
+                serde_json::to_string_pretty(&cfg).unwrap_or_default(),
+            );
+        }
+
         cfg
     }
 
@@ -199,11 +223,13 @@ pub fn is_windows_autostart() -> bool {
 }
 
 /// Applies or reverts Windows TCP/IP registry and network stack tweaks for low latency gaming.
+///
 /// When enabled:
 /// - Disables Nagle's algorithm (TcpAckFrequency = 1, TCPNoDelay = 1 on network interfaces)
 /// - Disables Windows Multimedia Network Throttling (NetworkThrottlingIndex = 0xFFFFFFFF)
 /// - Sets SystemResponsiveness = 0 (100% responsiveness for gaming and foreground processes)
 /// - Configures TCP auto-tuning and Receive Side Scaling (RSS) for multi-core packet processing
+///
 /// When disabled:
 /// - Restores Windows defaults cleanly: NetworkThrottlingIndex = 10, SystemResponsiveness = 20,
 ///   removes interface registry overrides.
@@ -347,7 +373,7 @@ fn push(a: &mut Vec<String>, xs: &[&str]) {
 
 /// Builds the winws argument list. Traffic matching TCP 80/443 and Discord voice
 /// UDP is desynced transparently at the kernel packet level via WinDivert.
-fn build_args(cfg: &Config, hosts: &PathBuf) -> Vec<String> {
+fn build_args(cfg: &Config, hosts: &Path) -> Vec<String> {
     let strat = isp::strategy(
         cfg.strategy
             .as_deref()
@@ -589,6 +615,8 @@ mod tests {
     #[test]
     fn test_config_fresh_install_defaults() {
         let cfg = Config::default();
+        assert_eq!(cfg.enabled_apps, vec!["discord".to_string(), "roblox".to_string()], "Default enabled apps must only be discord and roblox");
+        assert_eq!(cfg.app_defaults_version, 1, "Fresh install must set app_defaults_version to 1");
         assert!(cfg.auto_update, "auto_update must be true on fresh install");
         assert!(cfg.auto_start_pc, "auto_start_pc must be true on fresh install");
         assert!(cfg.hide_on_blur, "hide_on_blur must be true on fresh install");
@@ -598,6 +626,51 @@ mod tests {
         assert!(cfg.manage_dns, "manage_dns must be true on fresh install");
         assert!(!cfg.gaming_mode, "gaming_mode must default to false");
         assert!(!cfg.game_priority_boost, "game_priority_boost must default to false");
+    }
+
+    #[test]
+    fn test_one_time_enabled_apps_migration() {
+        let temp_dir = std::env::temp_dir().join(format!("slipstream_test_mig_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _ = fs::create_dir_all(&temp_dir);
+
+        // 1) Write legacy config with version 0 and old defaults + a custom platform
+        let legacy_json = r#"{
+            "isp": "turk-telekom",
+            "strategy": "fake-split-md5sig",
+            "enabled_apps": ["discord", "youtube", "roblox", "custom_testapp"],
+            "custom_platforms": [
+                {
+                    "id": "custom_testapp",
+                    "name": "Test App",
+                    "category": "app",
+                    "icon": "📱",
+                    "domains": ["testapp.com"]
+                }
+            ],
+            "custom_domains": [],
+            "custom_exes": []
+        }"#;
+        fs::write(temp_dir.join("config.json"), legacy_json).unwrap();
+
+        // 2) Load should trigger migration: resets enabled_apps to discord, roblox + custom_testapp
+        let loaded = Config::load(&temp_dir);
+        assert_eq!(loaded.app_defaults_version, 1);
+        assert!(loaded.enabled_apps.contains(&"discord".to_string()));
+        assert!(loaded.enabled_apps.contains(&"roblox".to_string()));
+        assert!(loaded.enabled_apps.contains(&"custom_testapp".to_string()));
+        assert!(!loaded.enabled_apps.contains(&"youtube".to_string()), "youtube should be pruned in one-time migration");
+
+        // 3) User manually turns on youtube and turns off roblox
+        let mut user_modified = loaded;
+        user_modified.enabled_apps = vec!["discord".to_string(), "youtube".to_string()];
+        user_modified.save(&temp_dir);
+
+        // 4) Subsequent load must NEVER touch user choices!
+        let reloaded = Config::load(&temp_dir);
+        assert_eq!(reloaded.app_defaults_version, 1);
+        assert_eq!(reloaded.enabled_apps, vec!["discord".to_string(), "youtube".to_string()], "User preferences must be strictly preserved");
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 
     #[test]

@@ -193,7 +193,7 @@ pub fn pick_exe_dialog() -> Option<String> {
     use std::mem;
 
     #[repr(C)]
-    #[allow(non_snake_case)]
+    #[allow(non_snake_case, clippy::upper_case_acronyms)]
     struct OPENFILENAMEW {
         lStructSize: u32,
         hwndOwner: isize,

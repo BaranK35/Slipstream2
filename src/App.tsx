@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./styles.css";
 import logoSvg from "./assets/logo.svg";
+import { translations, LANGUAGES, type LangCode } from "./translations";
 
 type CustomPlatform = {
   id: string;
@@ -48,6 +49,7 @@ type Cfg = {
   auto_healing: boolean;
   auto_update?: boolean;
   process_detection_mode?: boolean;
+  app_defaults_version?: number;
 };
 
 type DomainSuggestionResult = {
@@ -215,17 +217,43 @@ export default function App() {
   const [platformFilter, setPlatformFilter] = useState<"all" | "apps" | "games">("all");
   const [searchQuery, setSearchQuery] = useState("");
 
+  const [lang, setLang] = useState<LangCode>(() => {
+    try {
+      const saved = localStorage.getItem("slipstream_lang") as LangCode;
+      if (saved && LANGUAGES.some((l) => l.code === saved)) {
+        return saved;
+      }
+      return "tr";
+    } catch {
+      return "tr";
+    }
+  });
+
+  const isRtl = LANGUAGES.find((l) => l.code === lang)?.rtl ?? false;
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("slipstream_lang", lang);
+    } catch {}
+    if (typeof document !== "undefined") {
+      document.documentElement.dir = isRtl ? "rtl" : "ltr";
+      document.documentElement.lang = lang;
+    }
+  }, [lang, isRtl]);
+
+  const t = translations[lang] || translations.tr;
+
   // Appearance, Themes & Personalization
   type ThemeId = "cyber" | "erkek" | "amoled" | "emerald" | "crimson" | "violet" | "frost";
 
   const THEMES: { id: ThemeId; name: string; accent: string; bg: string; dot: string }[] = [
-    { id: "cyber", name: "Siber Gece", accent: "#6366f1", bg: "#0f1424", dot: "#6366f1" },
-    { id: "erkek", name: "🌸 Erkek Rengi (Pembe)", accent: "#f43f85", bg: "#170713", dot: "#f43f85" },
-    { id: "amoled", name: "OLED Siyah", accent: "#3b82f6", bg: "#050505", dot: "#3b82f6" },
-    { id: "emerald", name: "Zümrüt Oyuncu", accent: "#10b981", bg: "#06150e", dot: "#10b981" },
-    { id: "crimson", name: "Kan Kırmızı", accent: "#f43f5e", bg: "#16070a", dot: "#f43f5e" },
-    { id: "violet", name: "Ametist Gece", accent: "#a855f7", bg: "#12091f", dot: "#a855f7" },
-    { id: "frost", name: "Buzul Arktik", accent: "#06b6d4", bg: "#07131d", dot: "#06b6d4" },
+    { id: "cyber", name: t.theme_cyber, accent: "#6366f1", bg: "#0f1424", dot: "#6366f1" },
+    { id: "erkek", name: t.theme_erkek, accent: "#f43f85", bg: "#170713", dot: "#f43f85" },
+    { id: "amoled", name: t.theme_amoled, accent: "#3b82f6", bg: "#050505", dot: "#3b82f6" },
+    { id: "emerald", name: t.theme_emerald, accent: "#10b981", bg: "#06150e", dot: "#10b981" },
+    { id: "crimson", name: t.theme_crimson, accent: "#f43f5e", bg: "#16070a", dot: "#f43f5e" },
+    { id: "violet", name: t.theme_violet, accent: "#a855f7", bg: "#12091f", dot: "#a855f7" },
+    { id: "frost", name: t.theme_frost, accent: "#06b6d4", bg: "#07131d", dot: "#06b6d4" },
   ];
 
   const [theme, setTheme] = useState<ThemeId>(() => {
@@ -354,7 +382,7 @@ export default function App() {
   }, [soundEnabled]);
 
   const getDisplayVersion = (rawVer?: string) => {
-    const v = (rawVer || "0.1.8").replace(/^v/, "");
+    const v = (rawVer || "0.1.9").replace(/^v/, "");
     const parts = v.split(/[.+]/);
     if (parts.length > 3) {
       return `${parts[0]}.${parts[1]}.${parts[2]}`;
@@ -423,6 +451,7 @@ export default function App() {
           auto_healing: loadedCfg.auto_healing ?? true,
           auto_update: loadedCfg.auto_update ?? true,
           process_detection_mode: loadedCfg.process_detection_mode ?? false,
+          app_defaults_version: loadedCfg.app_defaults_version ?? 1,
         };
         setCfg(initialCfg);
         setOn(engineState);
@@ -472,7 +501,7 @@ export default function App() {
     });
 
     const unlistenDns = listen("dns_flushed", () => {
-      setSuccessMsg("DNS önbelleği başarıyla temizlendi.");
+      setSuccessMsg(t.suc_dnsFlushed);
     });
 
     const unlistenDetected = listen<string[]>("detected_processes_changed", (e) => {
@@ -684,7 +713,7 @@ export default function App() {
         id: cp.id,
         name: cp.name,
         category: cp.category,
-        tag: cp.exe_name ? cp.exe_name : `${cp.domains.length} alan adı & web sitesi`,
+        tag: cp.exe_name ? cp.exe_name : t.customPlatformTag(cp.domains.length),
         icon: cp.icon || (cp.category === "game" ? "🎮" : "🌐"),
         domains: cp.domains,
         probe: cp.domains[0] ? `https://${cp.domains[0]}` : "https://google.com",
@@ -725,16 +754,16 @@ export default function App() {
 
   if (!cat || !cfg) {
     return (
-      <div className="window-frame">
+      <div className="window-frame" dir={isRtl ? "rtl" : "ltr"}>
         <div className="titlebar" data-tauri-drag-region>
           <div className="brand" data-tauri-drag-region>
             <img src={logoSvg} alt="Slipstream" className="brand-logo" />
             <div className="status-indicator busy" />
-            <span className="brand-name" data-tauri-drag-region>Slipstream</span>
-            <span className="version-pill" title={`Sürüm: v${updateInfo?.current_version || "0.1.8"}`}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+            <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
+            <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.1.9")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
           </div>
           <div className="window-controls">
-            <button className="win-btn minimize" title="Tepsiye Küçült" onClick={() => invoke("hide_window")}>
+            <button className="win-btn minimize" title={t.minimizeTitle} onClick={() => invoke("hide_window")}>
               <svg viewBox="0 0 10 10">
                 <path d="M1 5h8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
               </svg>
@@ -743,7 +772,7 @@ export default function App() {
         </div>
         <div className="boot-container">
           <div className="spinner" />
-          <p>Slipstream Başlatılıyor...</p>
+          <p>{t.loadingText}</p>
           {err && (
             <p style={{ color: "#ff5252", fontSize: 11, padding: "0 16px", textAlign: "center" }}>
               {err}
@@ -788,8 +817,8 @@ export default function App() {
 
   const selectPopular = () => {
     if (soundEnabled) playTone("click");
-    patch({ enabled_apps: ["discord", "youtube", "roblox"] });
-    setSuccessMsg("Popüler platformlar (Discord, YouTube, Roblox) seçildi.");
+    patch({ enabled_apps: ["discord", "roblox"] });
+    setSuccessMsg(t.suc_popularSelected);
   };
 
   const applyPreset = (preset: "gamer" | "social" | "media" | "all") => {
@@ -799,22 +828,22 @@ export default function App() {
     if (preset === "gamer") {
       selected = ["roblox", "steam", "epicgames", "riotgames", "minecraft", "rockstar_blizzard_ea", "discord"];
       patch({ enabled_apps: selected, gaming_mode: true });
-      setSuccessMsg("🎮 Oyun Paketi aktif edildi (Roblox, Riot, Steam, Epic ve Düşük Gecikme Modu).");
+      setSuccessMsg(t.suc_gamerPack);
     } else if (preset === "social") {
       selected = ["discord", "x", "meta", "telegram", "reddit", "tiktok"];
       patch({ enabled_apps: selected });
-      setSuccessMsg("💬 Sosyal Medya & İletişim Paketi seçildi.");
+      setSuccessMsg(t.suc_socialPack);
     } else if (preset === "media") {
       selected = ["youtube", "twitch", "kick", "spotify"];
       patch({ enabled_apps: selected });
-      setSuccessMsg("📺 Yayın & Medya Paketi seçildi.");
+      setSuccessMsg(t.suc_mediaPack);
     } else if (preset === "all") {
       const allIds = [
         ...cat.apps.map((a) => a.id),
         ...cfg.custom_platforms.map((cp) => cp.id),
       ];
       patch({ enabled_apps: Array.from(new Set(allIds)) });
-      setSuccessMsg("🌍 Tüm platformlar seçildi.");
+      setSuccessMsg(t.suc_allSelected);
     }
   };
 
@@ -826,11 +855,11 @@ export default function App() {
       patch({ auto_start_pc: newVal });
       setSuccessMsg(
         newVal
-          ? "Slipstream Windows başlangıcına eklendi (Bilgisayar açılınca otomatik çalışacak)."
-          : "Slipstream Windows başlangıcından kaldırıldı."
+          ? t.suc_startupAdded
+          : t.suc_startupRemoved
       );
     } catch (e) {
-      setErr("Başlangıç ayarı değiştirilemedi: " + String(e));
+      setErr(t.err_startupFailed(String(e)));
     }
   }
 
@@ -850,10 +879,10 @@ export default function App() {
       }
       if (fastest) {
         patch({ doh_provider: fastest.provider });
-        setSuccessMsg(`⚡ En hızlı DNS seçildi: ${fastest.name} (${fastest.latency}ms)!`);
+        setSuccessMsg(t.suc_dnsSelected(fastest.name, fastest.latency!));
       }
     } catch (e) {
-      setErr("DNS benchmark hatası: " + String(e));
+      setErr(t.err_dnsFailed(String(e)));
     }
     setBenchmarkingDoh(false);
   }
@@ -863,11 +892,11 @@ export default function App() {
     setErr(null);
     try {
       await invoke("repair_discord");
-      setSuccessMsg("Discord ayarları onarıldı, DNS temizlendi ve temiz başlatıldı!");
+      setSuccessMsg(t.suc_discordRepaired);
       const diag = await invoke<DiscordDiagnosis>("diagnose_discord");
       setDiscordDiag(diag);
     } catch (e) {
-      setErr("Discord onarılamadı: " + String(e));
+      setErr(t.err_discordFailed(String(e)));
     }
     setRepairingDiscord(false);
   }
@@ -881,7 +910,7 @@ export default function App() {
       });
       setNetworkHealth(res);
     } catch (e) {
-      setErr("Sağlık teşhisi yapılamadı: " + String(e));
+      setErr(t.err_healthFailed(String(e)));
     }
     setCheckingHealth(false);
   }
@@ -924,9 +953,9 @@ export default function App() {
       if (best) {
         patch({ strategy: best });
         setOn(true);
-        setSuccessMsg(`En iyi strateji bulundu ve aktif edildi: ${best}`);
+        setSuccessMsg(t.suc_bestStrategy(best));
       } else {
-        setErr("Hiçbir strateji hedefe ulaşamadı. Log detaylarını inceleyebilirsiniz.");
+        setErr(t.suc_noStrategy);
       }
     } catch (e) {
       setErr(String(e));
@@ -940,7 +969,7 @@ export default function App() {
     const id = "custom_" + app.exe_name.toLowerCase().replace(/[^a-z0-9]/g, "_");
 
     if (cfg.custom_platforms.some((p) => p.id === id || p.exe_name?.toLowerCase() === app.exe_name.toLowerCase())) {
-      setErr(`"${app.name}" zaten platform listenizde ekli.`);
+      setErr(t.err_alreadyAdded(app.name));
       return;
     }
 
@@ -981,7 +1010,7 @@ export default function App() {
     });
 
     setShowAddModal(false);
-    setSuccessMsg(`"${app.name}" (${app.exe_name}) başarıyla eklendi (${generatedDomains.length} bağlantı noktası arka planda korumaya alındı)!`);
+    setSuccessMsg(t.suc_addedWithDomains(app.name, generatedDomains.length));
   }
 
   async function handlePickExeFile() {
@@ -999,7 +1028,7 @@ export default function App() {
       const id = "custom_" + exeName.toLowerCase().replace(/[^a-z0-9]/g, "_");
 
       if (cfg?.custom_platforms.some((p) => p.id === id || p.exe_name?.toLowerCase() === exeName.toLowerCase())) {
-        setErr(`"${baseName}" zaten platform listenizde ekli.`);
+        setErr(t.err_alreadyAdded(baseName));
         return;
       }
 
@@ -1038,9 +1067,9 @@ export default function App() {
       });
 
       setShowAddModal(false);
-      setSuccessMsg(`"${baseName}" (${exeName}) başarıyla eklendi (${generatedDomains.length} bağlantı noktası arka planda korumaya alındı)!`);
+      setSuccessMsg(t.suc_addedWithDomains(baseName, generatedDomains.length));
     } catch (e) {
-      setErr("Dosya seçilemedi: " + String(e));
+      setErr(t.err_fileNotFound(String(e)));
     }
   }
 
@@ -1054,7 +1083,7 @@ export default function App() {
     const name = addName.trim();
     const rawTarget = addUrl.trim() || name;
     if (!name && !rawTarget) {
-      setErr("Lütfen platform adı veya alan adı girin.");
+      setErr(t.err_invalidInput);
       return;
     }
 
@@ -1090,15 +1119,15 @@ export default function App() {
     setAddUrl("");
     setExpandedPreview([]);
     setShowAddModal(false);
-    setSuccessMsg(`"${displayName}" eklendi ve ${finalDomains.length} bağlantı noktası korumaya alındı!`);
+    setSuccessMsg(t.suc_addedWithDomains(displayName, finalDomains.length));
   }
 
   async function handleRestartDiscord() {
     try {
       await invoke("restart_discord");
-      setSuccessMsg("Discord relay üzerinden temiz şekilde başlatılıyor...");
+      setSuccessMsg(t.suc_discordRestarting);
     } catch (e) {
-      setErr("Discord başlatılamadı: " + String(e));
+      setErr(t.err_discordRestartFailed(String(e)));
     }
   }
 
@@ -1107,18 +1136,18 @@ export default function App() {
   async function handleFlushDns() {
     try {
       await invoke("flush_dns_cache");
-      setSuccessMsg("DNS önbelleği başarıyla temizlendi (FlushDNS tamamlandı).");
+      setSuccessMsg(t.suc_dnsFlush);
     } catch (e) {
-      setErr("DNS temizlenemedi: " + String(e));
+      setErr(t.err_dnsFlushFailed(String(e)));
     }
   }
 
   async function handleResetAdapterDns() {
     try {
       await invoke("reset_dns");
-      setSuccessMsg("Ağ kartlarının DNS ayarları varsayılana (otomatik DHCP) sıfırlandı!");
+      setSuccessMsg(t.suc_adapterReset);
     } catch (e) {
-      setErr("DNS sıfırlanamadı: " + String(e));
+      setErr(t.err_adapterFailed(String(e)));
     }
   }
 
@@ -1137,13 +1166,13 @@ export default function App() {
         if (cfg?.auto_update && info.download_url) {
           handleApplyUpdate(info.download_url);
         } else if (manual) {
-          setSuccessMsg(`🚀 Yeni sürüm bulundu: v${info.latest_version}`);
+          setSuccessMsg(t.suc_updateFound(info.latest_version));
         }
       } else if (manual) {
-        setSuccessMsg(`✅ En son sürümü (v${info.current_version}) kullanıyorsunuz. (GitHub ile senkronize)`);
+        setSuccessMsg(t.suc_upToDate(info.current_version));
       }
     } catch {
-      if (manual) setErr("Güncelleme sunucusuna (GitHub) erişilemedi.");
+      if (manual) setErr(t.err_updateServerUnreachable);
     }
     if (manual) setCheckingUpdates(false);
   }
@@ -1155,11 +1184,11 @@ export default function App() {
     lastUpdateAttemptRef.current = Date.now();
     updatingRef.current = true;
     setUpdating(true);
-    setSuccessMsg("Güncelleme indiriliyor ve kuruluyor, uygulama yeniden başlatılacak...");
+    setSuccessMsg(t.suc_updatingNotice);
     try {
       await invoke("apply_update", { downloadUrl: url });
     } catch (e) {
-      setErr("Güncelleme yüklenemedi: " + String(e));
+      setErr(t.err_updateFailed(String(e)));
       setUpdating(false);
       updatingRef.current = false;
     }
@@ -1189,14 +1218,14 @@ export default function App() {
           custom_domains: Array.from(new Set([...cfg.custom_domains, toAdd])),
         });
         setDomainDraft("");
-        setSuccessMsg(`"${toAdd}" özel alan adı eklendi.`);
+        setSuccessMsg(t.suc_domainAdded(toAdd));
       }
     } catch {
       patch({
         custom_domains: Array.from(new Set([...cfg.custom_domains, v])),
       });
       setDomainDraft("");
-      setSuccessMsg(`"${v}" özel alan adı eklendi.`);
+      setSuccessMsg(t.suc_domainAdded(v));
     }
     setSuggestingDomain(false);
   }
@@ -1213,8 +1242,8 @@ export default function App() {
     });
     setSuccessMsg(
       selectedOnly
-        ? `"${domainSuggestion.base_domain}" eklendi.`
-        : `"${domainSuggestion.display_name}" için ${toAdd.length} adet ilişkili alan adı ve CDN başarıyla eklendi!`
+        ? t.suc_domainAdded(domainSuggestion.base_domain)
+        : t.suc_suggestionsAdded(domainSuggestion.display_name, toAdd.length)
     );
     setDomainDraft("");
     setShowSuggestionModal(false);
@@ -1235,23 +1264,23 @@ export default function App() {
   const currentStrategy =
     cat.strategies.find((s) => s.id === cfg.strategy)?.name ||
     cat.strategies.find((s) => s.id === "fake-split-md5sig")?.name ||
-    "Otomatik (Fake + Split2 md5sig)";
+    t.defaultStrategyName;
 
   return (
-    <div className="window-frame">
+    <div className="window-frame" dir={isRtl ? "rtl" : "ltr"}>
       {/* Title Bar for System Tray Flyout */}
       <div className="titlebar" data-tauri-drag-region>
         <div className="brand" data-tauri-drag-region>
           <img src={logoSvg} alt="Slipstream" className="brand-logo" />
           <div className={`status-indicator ${busy ? "busy" : on ? "active" : "inactive"}`} />
-          <span className="brand-name" data-tauri-drag-region>Slipstream</span>
-          <span className="version-pill" title={`Sürüm: v${updateInfo?.current_version || "0.1.8"}`}>v{getDisplayVersion(updateInfo?.current_version)}</span>
-          {isPortable && <span className="portable-pill" title="Taşınabilir Tek Dosya Sürümü">Portable</span>}
+          <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
+          <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.1.9")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+          {isPortable && <span className="portable-pill" title={t.portableTitle}>{t.portableTag}</span>}
         </div>
         <div className="window-controls">
           <button
             className="win-btn minimize"
-            title="Tepsiye Küçült"
+            title={t.minimizeTitle}
             onClick={() => invoke("hide_window")}
           >
             <svg viewBox="0 0 10 10">
@@ -1268,15 +1297,15 @@ export default function App() {
             <div className="update-content">
               <div className="update-header-row">
                 <span className="update-badge">
-                  {cfg?.auto_update ? "⚡ OTOMATİK" : "YENİ SÜRÜM"}
+                  {cfg?.auto_update ? t.autoBadge : t.newVersionBadge}
                 </span>
                 <span className="update-version-tag">v{updateInfo.latest_version}</span>
               </div>
               <div className="update-summary-row">
                 <span className="update-compact-desc">
                   {cfg?.auto_update
-                    ? (updating ? "İndiriliyor ve kuruluyor..." : "Arka planda otomatik güncelleniyor.")
-                    : "Yeni performans ve altyapı yaması hazır."}
+                    ? (updating ? t.autoUpdatingText : t.autoBgUpdatingText)
+                    : t.manualUpdateText}
                 </span>
                 {updateInfo.release_notes && !cfg?.auto_update && (
                   <button
@@ -1284,7 +1313,7 @@ export default function App() {
                     className="update-details-link-btn"
                     onClick={() => setShowReleaseNotesModal(true)}
                   >
-                    Detaylar
+                    {t.detailsLink}
                   </button>
                 )}
               </div>
@@ -1295,11 +1324,11 @@ export default function App() {
                 onClick={() => handleApplyUpdate()}
                 disabled={updating}
               >
-                {updating ? "İndiriliyor..." : "Şimdi Güncelle"}
+                {updating ? t.downloadingText : t.updateNowBtn}
               </button>
             ) : (
               <span className="update-auto-tag">
-                {updating ? "⏳ İndiriliyor..." : "⚡ Otomatik"}
+                {updating ? t.downloadingAutoTag : t.autoTag}
               </span>
             )}
           </div>
@@ -1311,25 +1340,25 @@ export default function App() {
             className={`tab-item ${activeTab === "services" ? "active" : ""}`}
             onClick={() => handleTabChange("services")}
           >
-            Platformlar ({cfg.enabled_apps.length})
+            {t.tabPlatforms(cfg.enabled_apps.length)}
           </button>
           <button
             className={`tab-item ${activeTab === "settings" ? "active" : ""}`}
             onClick={() => handleTabChange("settings")}
           >
-            İSS & Strateji
+            {t.tabSettings}
           </button>
           <button
             className={`tab-item ${activeTab === "rules" ? "active" : ""}`}
             onClick={() => handleTabChange("rules")}
           >
-            Özel ({cfg.custom_domains.length})
+            {t.tabCustomRules(cfg.custom_domains.length)}
           </button>
           <button
             className={`tab-item ${activeTab === "preferences" ? "active" : ""}`}
             onClick={() => handleTabChange("preferences")}
           >
-            ⚙️ Ayarlar
+            {t.tabPreferences}
           </button>
         </div>
 
@@ -1343,7 +1372,7 @@ export default function App() {
                   className={`power-button ${busy ? "busy" : on ? "on" : "off"}`}
                   onClick={handlePower}
                   disabled={busy}
-                  aria-label={on ? "Bypass'ı Kapat" : "Bypass'ı Aç"}
+                  aria-label={on ? t.powerOnLabel : t.powerOffLabel}
                 >
                   <svg viewBox="0 0 100 100" className="power-svg">
                     <circle cx="50" cy="50" r="42" className="power-ring" />
@@ -1355,35 +1384,35 @@ export default function App() {
               <div className="hero-status">
                 <div className={`state-badge ${busy ? "busy" : on ? "on" : "off"}`}>
                   <span className={`status-dot ${busy ? "busy" : on ? "on" : "off"}`} />
-                  {busy ? "Ayarlanıyor..." : on ? "BYPASS AKTİF" : "KORUMA KAPALI"}
+                  {busy ? t.powerBusy : on ? t.bypassActive : t.protectionOff}
                 </div>
                 <p className="hero-subtitle">
                   {on
-                    ? "Sıfır Gecikme • Doğrudan UDP Ses & Kernel Desync"
-                    : "Seçili servisler için tek tıkla korumayı başlatın."}
+                    ? t.heroPitchOn
+                    : t.heroPitchOff}
                 </p>
               </div>
 
               {/* Real-time Ping Radar Badge */}
               <div className="latency-radar-bar">
-                <div className="latency-badge" title="Discord bağlantı gecikmesi">
+                <div className="latency-badge" title={t.discordPingTitle}>
                   <span className="latency-dot discord" />
-                  <span className="latency-label">Discord:</span>
+                  <span className="latency-label">{t.discordPing}</span>
                   <span className="latency-val">
                     {latency.discord !== null ? `${latency.discord}ms` : "—"}
                   </span>
                 </div>
-                <div className="latency-badge" title="Cloudflare DoH gecikmesi">
+                <div className="latency-badge" title={t.dohDnsTitle}>
                   <span className="latency-dot cloudflare" />
-                  <span className="latency-label">DoH DNS:</span>
+                  <span className="latency-label">{t.dohDns}</span>
                   <span className="latency-val">
                     {latency.cloudflare !== null ? `${latency.cloudflare}ms` : "—"}
                   </span>
                 </div>
-                <div className="latency-badge zero-overhead" title="Yerel Proxy Yok - Doğrudan Hat Erişimi">
+                <div className="latency-badge zero-overhead" title={t.noExtraLatencyTitle}>
                   <span className="latency-dot zero" />
-                  <span className="latency-label">Ek Gecikme:</span>
-                  <span className="latency-val zero">0 ms</span>
+                  <span className="latency-label">{t.noExtraLatency}</span>
+                  <span className="latency-val zero">{t.zeroLatencyVal}</span>
                 </div>
               </div>
             </section>
@@ -1393,7 +1422,7 @@ export default function App() {
                 <span className="search-icon">🔍</span>
                 <input
                   className="search-input"
-                  placeholder="Platform veya oyun ara..."
+                  placeholder={t.searchPlaceholder}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
@@ -1406,9 +1435,9 @@ export default function App() {
               <button
                 className="add-platform-btn"
                 onClick={() => setShowAddModal(true)}
-                title="Yeni uygulama veya oyun ekle"
+                title={t.addPlatformTitle}
               >
-                + Ekle
+                {t.addPlatformBtn}
               </button>
             </div>
 
@@ -1418,19 +1447,19 @@ export default function App() {
                 className={`pill-btn ${platformFilter === "all" ? "active" : ""}`}
                 onClick={() => setPlatformFilter("all")}
               >
-                Tümü ({allPlatforms.length})
+                {t.allFilter(allPlatforms.length)}
               </button>
               <button
                 className={`pill-btn ${platformFilter === "apps" ? "active" : ""}`}
                 onClick={() => setPlatformFilter("apps")}
               >
-                Uygulama ({appCount})
+                {t.appsFilter(appCount)}
               </button>
               <button
                 className={`pill-btn ${platformFilter === "games" ? "active" : ""}`}
                 onClick={() => setPlatformFilter("games")}
               >
-                Oyun ({gameCount})
+                {t.gamesFilter(gameCount)}
               </button>
             </div>
 
@@ -1439,44 +1468,44 @@ export default function App() {
               <button
                 className="quick-chip"
                 onClick={selectPopular}
-                title="Discord, YouTube, Roblox"
+                title={t.presetPopularTitle}
               >
-                ⭐ Popüler
+                {t.presetPopular}
               </button>
               <button
                 className="quick-chip"
                 onClick={() => applyPreset("gamer")}
-                title="Roblox, Steam, Epic Games, Riot, Minecraft"
+                title={t.presetGamerTitle}
               >
-                🎮 Oyun
+                {t.presetGamer}
               </button>
               <button
                 className="quick-chip"
                 onClick={() => applyPreset("social")}
-                title="Discord, X, Meta, Telegram, Reddit, TikTok"
+                title={t.presetSocialTitle}
               >
-                💬 Sosyal
+                {t.presetSocial}
               </button>
               <button
                 className="quick-chip"
                 onClick={() => applyPreset("media")}
-                title="YouTube, Twitch, Kick, Spotify"
+                title={t.presetMediaTitle}
               >
-                📺 Medya
+                {t.presetMedia}
               </button>
               <button
                 className="quick-chip secondary"
                 onClick={() => toggleSelectAll(true)}
-                title="Tüm platformları seç"
+                title={t.selectAllTitle}
               >
-                Tümünü Seç
+                {t.selectAllBtn}
               </button>
               <button
                 className="quick-chip secondary"
                 onClick={() => toggleSelectAll(false)}
-                title="Seçimleri kaldır"
+                title={t.clearAllTitle}
               >
-                Temizle
+                {t.clearAllBtn}
               </button>
             </div>
 
@@ -1484,7 +1513,7 @@ export default function App() {
             <div className={`app-list ${cardDensity === "compact" ? "density-compact" : ""}`}>
               {filteredPlatforms.length === 0 ? (
                 <div className="empty-state">
-                  <p>Aramanızla eşleşen platform bulunamadı.</p>
+                  <p>{t.noPlatformsFound}</p>
                 </div>
               ) : (
                 filteredPlatforms.map((a) => {
@@ -1501,10 +1530,10 @@ export default function App() {
                         <div className="app-meta">
                           <div className="app-title-row">
                             <span className="app-title">{a.name}</span>
-                            {a.isCustom && <span className="custom-badge">Özel</span>}
+                            {a.isCustom && <span className="custom-badge">{t.customBadge}</span>}
                             {cfg.process_detection_mode && detectedProcesses.includes(a.id) && (
-                              <span className="live-process-badge" title="Çalışan süreç arka planda algılandı">
-                                ⚡ Canlı Süreç
+                              <span className="live-process-badge" title={t.liveProcessTitle}>
+                                {t.liveProcessBadge}
                               </span>
                             )}
                           </div>
@@ -1517,19 +1546,19 @@ export default function App() {
                         {a.id === "discord" && isChecked && (
                           <button
                             className="discord-restart-pill"
-                            title="Discord'u relay üzerinden temiz başlat"
+                            title={t.restartDiscordTitle}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleRestartDiscord();
                             }}
                           >
-                            🔄 Yeniden Başlat
+                            {t.restartDiscordBtn}
                           </button>
                         )}
                         {a.isCustom && (
                           <button
                             className="delete-custom-btn"
-                            title="Bu özel platformu sil"
+                            title={t.deletePlatformBtn}
                             onClick={(e) => {
                               e.stopPropagation();
                               removeCustomPlatform(a.id);
@@ -1554,7 +1583,7 @@ export default function App() {
         {activeTab === "settings" && (
           <section className="tab-pane">
             <div className="field-group">
-              <label className="field-label">İnternet Servis Sağlayıcınız</label>
+              <label className="field-label">{t.ispLabel}</label>
               <select
                 className="select-input"
                 value={cfg.isp}
@@ -1563,7 +1592,7 @@ export default function App() {
                   const firstStrat = cat.isps.find((i) => i.id === newIsp)?.order?.[0] || "fake-split-md5sig";
                   patch({ isp: newIsp, strategy: firstStrat });
                   const ispName = cat.isps.find((i) => i.id === newIsp)?.name || newIsp;
-                  setSuccessMsg(`Sağlayıcı ${ispName} seçildi. Önerilen strateji (${firstStrat}) uygulandı.`);
+                  setSuccessMsg(t.suc_ispChanged(ispName, firstStrat));
                 }}
               >
                 {cat.isps.map((i) => (
@@ -1575,7 +1604,7 @@ export default function App() {
             </div>
 
             <div className="field-group">
-              <label className="field-label">Kullanılan Bypass Stratejisi</label>
+              <label className="field-label">{t.strategyLabel}</label>
               <select
                 className="select-input"
                 value={cfg.strategy || "fake-split-md5sig"}
@@ -1583,7 +1612,7 @@ export default function App() {
                   const newStrat = e.target.value;
                   patch({ strategy: newStrat });
                   const stratName = cat.strategies.find((s) => s.id === newStrat)?.name || newStrat;
-                  setSuccessMsg(`Bypass stratejisi uygulandı: ${stratName}`);
+                  setSuccessMsg(t.suc_strategyChanged(stratName));
                 }}
               >
                 {cat.strategies.map((s) => (
@@ -1593,7 +1622,7 @@ export default function App() {
                 ))}
               </select>
               <span className="field-hint">
-                Aktif: <b>{currentStrategy}</b>
+                {t.activeStrategy} <b>{currentStrategy}</b>
               </span>
             </div>
 
@@ -1604,19 +1633,19 @@ export default function App() {
                 onClick={handleAutoTune}
                 disabled={busy}
               >
-                {busy ? "Stratejiler Test Ediliyor..." : "⚡ En İyi Ayarı Otomatik Bul"}
+                {busy ? t.autoTuneBusy : t.autoTuneBtn}
               </button>
               <button
                 className="text-btn"
                 onClick={() => setShowLog(!showLog)}
               >
-                {showLog ? "Log Detaylarını Gizle ▲" : "Log Detaylarını Göster ▼"}
+                {showLog ? t.hideLogBtn : t.showLogBtn}
               </button>
 
               {showLog && (
                 <div className="log-container">
                   {log.length === 0 ? (
-                    <p className="empty-log">Henüz test çalıştırılmadı.</p>
+                    <p className="empty-log">{t.noTestYet}</p>
                   ) : (
                     log.map((line, idx) => (
                       <div key={idx} className="log-line">
@@ -1630,13 +1659,13 @@ export default function App() {
             </div>
 
             {/* Güvenli Ağ & DoH Benchmark Araçları */}
-            <div className="pref-section-title" style={{ marginTop: 10 }}>🌐 Güvenli Ağ & DNS (DoH) Araçları</div>
+            <div className="pref-section-title" style={{ marginTop: 10 }}>{t.dnsTitle}</div>
             <div className="pref-card">
               <div className="pref-row" style={{ marginBottom: 10 }}>
                 <div className="pref-meta">
-                  <span className="pref-name">Otomatik Güvenli DNS Yönetimi</span>
+                  <span className="pref-name">{t.autoSafeDns}</span>
                   <span className="pref-desc">
-                    Discord ses kanalları ve engelli dinamik sunucular için ağ kartını otomatik olarak temiz DNS'e yönlendirir (Kapatıldığında eski haline döner).
+                    {t.autoSafeDnsDesc}
                   </span>
                 </div>
                 <div
@@ -1651,14 +1680,14 @@ export default function App() {
 
               <div className="field-group" style={{ marginBottom: 6 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                  <label className="field-label" style={{ marginBottom: 0 }}>DoH DNS Sağlayıcısı</label>
+                  <label className="field-label" style={{ marginBottom: 0 }}>{t.dohProviderLabel}</label>
                   <button
                     className="tool-btn"
                     style={{ flex: "none", padding: "3px 8px", fontSize: 10 }}
                     onClick={handleBenchDoh}
                     disabled={benchmarkingDoh}
                   >
-                    {benchmarkingDoh ? "Test Ediliyor..." : "⚡ En Hızlı DNS'i Test Et & Seç"}
+                    {benchmarkingDoh ? t.benchDnsBusy : t.benchDnsBtn}
                   </button>
                 </div>
                 <select
@@ -1666,11 +1695,11 @@ export default function App() {
                   value={cfg.doh_provider}
                   onChange={(e) => patch({ doh_provider: e.target.value })}
                 >
-                  <option value="cloudflare">Cloudflare (1.1.1.1 - En Hızlı)</option>
-                  <option value="google">Google DNS (dns.google - Maksimum Kararlılık)</option>
-                  <option value="quad9">Quad9 (9.9.9.9 - Gizlilik ve Güvenlik)</option>
-                  <option value="adguard">AdGuard (dns.adguard-dns.com - Reklam Engelleyici)</option>
-                  <option value="yandex">Yandex DNS (77.88.8.8 - Hızlı ve Kararlı)</option>
+                  <option value="cloudflare">Cloudflare (1.1.1.1)</option>
+                  <option value="google">Google DNS (dns.google)</option>
+                  <option value="quad9">Quad9 (9.9.9.9)</option>
+                  <option value="adguard">AdGuard (dns.adguard-dns.com)</option>
+                  <option value="yandex">Yandex DNS (77.88.8.8)</option>
                 </select>
               </div>
 
@@ -1695,10 +1724,10 @@ export default function App() {
                                 : "slow"
                             }`}
                           >
-                            {b.latency !== null ? `${b.latency}ms` : "Hata"}
+                            {b.latency !== null ? `${b.latency}ms` : t.benchError}
                           </span>
                         </div>
-                        {isSelected && <span className="doh-best-tag">Aktif</span>}
+                        {isSelected && <span className="doh-best-tag">{t.dohActiveTag}</span>}
                       </div>
                     );
                   })}
@@ -1706,14 +1735,14 @@ export default function App() {
               )}
 
               <div className="tool-buttons-row">
-                <button className="tool-btn" onClick={handleFlushDns} title="Windows DNS önbelleğini boşalt">
-                  🔄 DNS Önbelleğini Temizle
+                <button className="tool-btn" onClick={handleFlushDns} title={t.flushDnsTitle}>
+                  {t.flushDnsBtn}
                 </button>
-                <button className="tool-btn" onClick={handleResetAdapterDns} title="Ağ kartlarını otomatik DHCP'ye döndür">
-                  🔁 Ağ Kartlarını Sıfırla
+                <button className="tool-btn" onClick={handleResetAdapterDns} title={t.resetAdaptersTitle}>
+                  {t.resetAdaptersBtn}
                 </button>
-                <button className="tool-btn" onClick={handleRunHealthCheck} title="Ağ ve bypass durumunu kontrol et">
-                  🩺 Ağ Teşhisi
+                <button className="tool-btn" onClick={handleRunHealthCheck} title={t.networkDiagTitle}>
+                  {t.networkDiagBtn}
                 </button>
               </div>
             </div>
@@ -1724,12 +1753,12 @@ export default function App() {
         {activeTab === "rules" && (
           <section className="tab-pane">
             <div className="field-group">
-              <label className="field-label">Özel Alan Adı Ekle</label>
+              <label className="field-label">{t.customDomainLabel}</label>
               <div className="add-row">
                 <input
                   className="text-input"
                   value={domainDraft}
-                  placeholder="örn: pastebin.com veya roblox.com"
+                  placeholder={t.customDomainPlaceholder}
                   onChange={(e) => setDomainDraft(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleAddDomain()}
                   disabled={suggestingDomain}
@@ -1739,17 +1768,17 @@ export default function App() {
                   onClick={handleAddDomain}
                   disabled={suggestingDomain || !domainDraft.trim()}
                 >
-                  {suggestingDomain ? "Taranıyor..." : "Ekle"}
+                  {suggestingDomain ? t.addingDomain : t.addBtn}
                 </button>
               </div>
               <span className="field-hint">
-                ✨ Girdiğiniz alan adının CDN, API ve bağlı sunucuları otomatik algılanır ve toplu ekleme için önerilir.
+                {t.customDomainHint}
               </span>
             </div>
 
             <div className="rules-list">
               {cfg.custom_domains.length === 0 ? (
-                <p className="empty-state">Özel alan adı eklenmedi.</p>
+                <p className="empty-state">{t.noCustomDomains}</p>
               ) : (
                 cfg.custom_domains.map((dom) => (
                   <div key={dom} className="rule-chip">
@@ -1757,7 +1786,7 @@ export default function App() {
                     <button
                       className="chip-remove"
                       onClick={() => removeRule(dom)}
-                      title="Sil"
+                      title={t.removeRuleTitle}
                     >
                       ×
                     </button>
@@ -1778,21 +1807,21 @@ export default function App() {
                 className={`subtab-btn ${prefSubTab === "genel" ? "active" : ""}`}
                 onClick={() => setPrefSubTab("genel")}
               >
-                💻 Genel
+                {t.generalSubTab}
               </button>
               <button
                 type="button"
                 className={`subtab-btn ${prefSubTab === "gelismis" ? "active" : ""}`}
                 onClick={() => setPrefSubTab("gelismis")}
               >
-                ⚡ Gelişmiş & Performans
+                {t.advancedSubTab}
               </button>
               <button
                 type="button"
                 className={`subtab-btn ${prefSubTab === "kisisellestir" ? "active" : ""}`}
                 onClick={() => setPrefSubTab("kisisellestir")}
               >
-                🎨 Kişiselleştirme
+                {t.personalizeSubTab}
               </button>
             </div>
 
@@ -1800,12 +1829,12 @@ export default function App() {
             {prefSubTab === "genel" && (
               <>
                 {/* Sistem ve Başlangıç */}
-                <div className="pref-section-title">💻 Sistem & Başlangıç</div>
+                <div className="pref-section-title">{t.systemSectionTitle}</div>
                 <div className="pref-card">
                   <div className="pref-row">
                     <div className="pref-meta">
-                      <span className="pref-name">Windows Açılınca Başlat</span>
-                      <span className="pref-desc">Bilgisayarınız açıldığında Slipstream arka planda otomatik başlar.</span>
+                      <span className="pref-name">{t.autoStartPcLabel}</span>
+                      <span className="pref-desc">{t.autoStartPcDesc}</span>
                     </div>
                     <div
                       className={`switch ${cfg.auto_start_pc ? "checked" : ""}`}
@@ -1819,8 +1848,8 @@ export default function App() {
 
                   <div className="pref-row">
                     <div className="pref-meta">
-                      <span className="pref-name">Açılışta Otomatik Koruma</span>
-                      <span className="pref-desc">Uygulama açılır açılmaz bypass korumasını kendiliğinden devreye sokar.</span>
+                      <span className="pref-name">{t.autoConnectLabel}</span>
+                      <span className="pref-desc">{t.autoConnectDesc}</span>
                     </div>
                     <div
                       className={`switch ${cfg.auto_connect ? "checked" : ""}`}
@@ -1834,8 +1863,8 @@ export default function App() {
 
                   <div className="pref-row">
                     <div className="pref-meta">
-                      <span className="pref-name">Başlangıçta Tepsiye Gizlen</span>
-                      <span className="pref-desc">Açılışta ekranda pencere göstermez, doğrudan görev çubuğu tepsisine yerleşir.</span>
+                      <span className="pref-name">{t.startMinimizedLabel}</span>
+                      <span className="pref-desc">{t.startMinimizedDesc}</span>
                     </div>
                     <div
                       className={`switch ${cfg.start_minimized ? "checked" : ""}`}
@@ -1849,8 +1878,8 @@ export default function App() {
 
                   <div className="pref-row">
                     <div className="pref-meta">
-                      <span className="pref-name">Odak Kaybında Otomatik Gizle</span>
-                      <span className="pref-desc">Başka bir pencereye veya masaüstüne tıklandığında pencereyi otomatik sistem tepsisine küçültür.</span>
+                      <span className="pref-name">{t.hideOnBlurLabel}</span>
+                      <span className="pref-desc">{t.hideOnBlurDesc}</span>
                     </div>
                     <div
                       className={`switch ${cfg.hide_on_blur ? "checked" : ""}`}
@@ -1866,16 +1895,16 @@ export default function App() {
                 </div>
 
                 {/* Canlı Oyun & Uygulama Algılayıcı */}
-                <div className="pref-section-title">⚡ Canlı Oyun & Süreç Tanıma</div>
+                <div className="pref-section-title">{t.liveDetectionSectionTitle}</div>
                 <div className="pref-card">
                   <div className="pref-row">
                     <div className="pref-meta">
                       <div className="pref-badge-row">
-                        <span className="pref-name">Otomatik Süreç & Oyun Algılama</span>
-                        <span className="pill-badge pill-cyan">Dinamik</span>
+                        <span className="pref-name">{t.processDetectionLabel}</span>
+                        <span className="pill-badge pill-cyan">{t.dynamicBadge}</span>
                       </div>
                       <span className="pref-desc">
-                        Bilgisayarınızda Discord, Roblox, Steam, Spotify, Minecraft, Riot Games veya listenize eklediğiniz özel oyunlar açıldığı an arka planda sıfır gecikmeyle tespit eder, listenin en başına taşır ve koruma kurallarını otomatik devreye sokar.
+                        {t.processDetectionDesc}
                       </span>
                     </div>
                     <div
@@ -1889,7 +1918,7 @@ export default function App() {
                   <div className="process-status-box" style={{ marginTop: 10 }}>
                     <div className="process-status-header">
                       <span className={`process-status-dot ${cfg.process_detection_mode ? "active" : ""}`} />
-                      <span className="process-status-title">Canlı Algılanan Aktif Süreçler:</span>
+                      <span className="process-status-title">{t.detectedProcessesTitle}</span>
                     </div>
                     <div className="process-status-tags">
                       {detectedProcesses.length > 0 ? (
@@ -1897,24 +1926,24 @@ export default function App() {
                           const found = cat?.apps.find((a) => a.id === pId) || cfg.custom_platforms.find((cp) => cp.id === pId);
                           return (
                             <span key={pId} className="proc-tag active">
-                              🟢 {found ? found.name : pId} (Çalışıyor)
+                              {t.processRunningTag(found ? found.name : pId)}
                             </span>
                           );
                         })
                       ) : (
-                        <span className="proc-tag empty">⚪ Şu an çalışan desteklenen oyun/uygulama süreci bulunmuyor</span>
+                        <span className="proc-tag empty">{t.noProcessesRunningTag}</span>
                       )}
                     </div>
                   </div>
                 </div>
 
                 {/* Güncelleme Yönetimi */}
-                <div className="pref-section-title">🔄 Güncelleme Yönetimi</div>
+                <div className="pref-section-title">{t.updateMgmtSectionTitle}</div>
                 <div className="pref-card">
                   <div className="pref-row">
                     <div className="pref-meta">
-                      <span className="pref-name">Otomatik Güncelleme</span>
-                      <span className="pref-desc">Yeni sürüm çıktığında kullanıcıyı rahatsız etmeden arka planda indirip kurar.</span>
+                      <span className="pref-name">{t.autoUpdateLabel}</span>
+                      <span className="pref-desc">{t.autoUpdateDesc}</span>
                     </div>
                     <div
                       className={`switch ${cfg.auto_update ? "checked" : ""}`}
@@ -1928,16 +1957,16 @@ export default function App() {
 
                   <div className="pref-row">
                     <div className="pref-meta">
-                      <span className="pref-name">Sürüm Kontrolü</span>
+                      <span className="pref-name">{t.versionCheckLabel}</span>
                       <span className="pref-desc">
-                        Mevcut: v{updateInfo?.current_version || "0.1.7"}
+                        {t.currentVersionPrefix} v{updateInfo?.current_version || "0.1.9"}
                         {updateInfo?.has_update ? (
                           <span style={{ color: "var(--cyan)", fontWeight: 600, marginLeft: 6 }}>
-                            (🚀 v{updateInfo.latest_version} Yayında)
+                            {t.newVersionLiveTag(updateInfo.latest_version)}
                           </span>
                         ) : (
                           <span style={{ color: "var(--text-muted)", marginLeft: 6 }}>
-                            (Son Sürüm)
+                            {t.latestVersionTag}
                           </span>
                         )}
                       </span>
@@ -1947,7 +1976,7 @@ export default function App() {
                         className="secondary-btn"
                         style={{ padding: "6px 10px", fontSize: 11 }}
                         onClick={() => invoke("open_url", { url: "https://github.com/BaranK35/Slipstream2/releases" })}
-                        title="GitHub Releases sayfasını aç"
+                        title={t.githubBtnTitle}
                       >
                         GitHub
                       </button>
@@ -1957,26 +1986,26 @@ export default function App() {
                         onClick={() => handleCheckUpdates(true)}
                         disabled={checkingUpdates}
                       >
-                        {checkingUpdates ? "Kontrol Ediliyor..." : "Güncellemeleri Denetle"}
+                        {checkingUpdates ? t.checkingUpdatesText : t.checkUpdatesBtn}
                       </button>
                     </div>
                   </div>
                 </div>
 
                 {/* Yasal Şartlar & Gizlilik */}
-                <div className="pref-section-title">📜 Yasal Şartlar & Gizlilik</div>
+                <div className="pref-section-title">{t.eulaSectionTitle}</div>
                 <div className="pref-card">
                   <div className="pref-row">
                     <div className="pref-meta">
-                      <span className="pref-name">Kullanım Şartları & Gizlilik (EULA)</span>
-                      <span className="pref-desc">Veri toplamama ilkesi, yerel çalışma prensibi ve açık kaynak kullanım kuralları.</span>
+                      <span className="pref-name">{t.eulaLabel}</span>
+                      <span className="pref-desc">{t.eulaDesc}</span>
                     </div>
                     <button
                       className="secondary-btn"
                       style={{ padding: "6px 12px", fontSize: 11 }}
                       onClick={() => setShowEulaModal(true)}
                     >
-                      Metni Oku
+                      {t.readEulaBtn}
                     </button>
                   </div>
                 </div>
@@ -1987,16 +2016,16 @@ export default function App() {
             {prefSubTab === "gelismis" && (
               <>
                 {/* Performans & Oyun Modu */}
-                <div className="pref-section-title">🎮 Performans & Oyun Modu</div>
+                <div className="pref-section-title">{t.gamingModeSectionTitle}</div>
                 <div className="pref-card">
                   <div className="pref-row">
                     <div className="pref-meta">
                       <div className="pref-badge-row">
-                        <span className="pref-name">Düşük Gecikmeli Oyun & Ses Modu (TCP NoDelay & Ağ Kısıtlama İptali)</span>
-                        <span className="pill-badge pill-emerald">Ağ & Ping</span>
+                        <span className="pref-name">{t.gamingModeLabel}</span>
+                        <span className="pill-badge pill-emerald">{t.networkPingBadge}</span>
                       </div>
                       <span className="pref-desc">
-                        Nagle algoritmasını devre dışı bırakır (TCPNoDelay / TcpAckFrequency), Windows multimedya ağ kısıtlamasını (NetworkThrottlingIndex) tamamen kaldırır ve sistem işlem önceliğini (SystemResponsiveness = 0) tam güçle oyun ve ses paketlerine yönlendirir. Oyun içi gecikme (ping) ve paket dalgalanmalarını (jitter) en aza indirir. Kapatıldığında Windows varsayılan değerlerine temizce geri döner.
+                        {t.gamingModeDesc}
                       </span>
                     </div>
                     <div
@@ -2012,13 +2041,15 @@ export default function App() {
                   <div className="pref-row">
                     <div className="pref-meta">
                       <div className="pref-badge-row">
-                        <span className="pref-name">Oyun Süreçlerine Yüksek İşlemci Önceliği</span>
-                        <span className="pill-badge pill-cyan">Ekstra Ayar</span>
+                        <span className="pref-name">{t.gamePriorityBoostLabel}</span>
+                        <span className="pill-badge pill-cyan">{t.extraSettingBadge}</span>
                       </div>
                       <span className="pref-desc">
-                        Sistemde çalışan süreçlerin önceliğinin otomatik değiştirilmesini istemeyen kullanıcılar için bağımsız ekstra ayardır.
-                        Açıldığında <strong>SADECE aktif oyun süreçlerini</strong> (Roblox, Valorant, CS2, Minecraft vb.) High Priority (Yüksek Öncelik) moduna alır.
-                        Discord, Spotify veya tarayıcı gibi arka plan uygulamalarının önceliğine <strong>asla dokunulmaz</strong>; böylece oyununuzun işlemci gücü korunur ve mikro takılmalar (FPS drop) engellenir.
+                        {t.gamePriorityBoostDescPart1} {t.gamePriorityBoostDescPart2}
+                        <strong>{t.gamePriorityBoostDescStrong1}</strong>
+                        {t.gamePriorityBoostDescPart3} {t.gamePriorityBoostDescPart4}
+                        <strong>{t.gamePriorityBoostDescStrong2}</strong>
+                        {t.gamePriorityBoostDescPart5}
                       </span>
                     </div>
                     <div
@@ -2033,8 +2064,8 @@ export default function App() {
 
                   <div className="pref-row">
                     <div className="pref-meta">
-                      <span className="pref-name">Kendi Kendini Onaran Bekçi (Watchdog) & Otonom İyileştirme</span>
-                      <span className="pref-desc">DPI motoru bir sebeple kapanırsa veya İSS engel kurallarını değiştirirse saniyeler içinde arka planda sessizce tespit edip yeniden ayağa kaldırır ve çalışan stratejiye geçer.</span>
+                      <span className="pref-name">{t.autoHealingLabel}</span>
+                      <span className="pref-desc">{t.autoHealingDesc}</span>
                     </div>
                     <div
                       className={`switch ${cfg.auto_healing ? "checked" : ""}`}
@@ -2046,25 +2077,25 @@ export default function App() {
                 </div>
 
                 {/* Discord Onarım Merkezi */}
-                <div className="pref-section-title">💬 Discord Onarım & Durum Merkezi</div>
+                <div className="pref-section-title">{t.discordRepairSectionTitle}</div>
                 <div className="pref-card">
                   <div className="discord-diag-card">
                     <div className="diag-row">
-                      <span className="diag-label">18809 Yerel Aktarıcı:</span>
+                      <span className="diag-label">{t.discordRelay18809}</span>
                       <span className={`diag-val ${discordDiag?.relay_ok ? "ok" : "warn"}`}>
-                        {discordDiag?.relay_ok ? "🟢 Hazır ve Dinliyor" : "⚪ Beklemede"}
+                        {discordDiag?.relay_ok ? t.discordRelayReady : t.discordRelayWaiting}
                       </span>
                     </div>
                     <div className="diag-row">
-                      <span className="diag-label">Discord settings.json:</span>
+                      <span className="diag-label">{t.discordSettingsJson}</span>
                       <span className={`diag-val ${discordDiag?.patched ? "ok" : "warn"}`}>
-                        {discordDiag?.patched ? "🟢 NEW_UPDATE_ENDPOINT Entegre" : "⚪ Standart"}
+                        {discordDiag?.patched ? t.discordSettingsPatched : t.discordSettingsStandard}
                       </span>
                     </div>
                     <div className="diag-row">
-                      <span className="diag-label">Discord Uygulama Süreci:</span>
+                      <span className="diag-label">{t.discordProcessStatus}</span>
                       <span className={`diag-val ${discordDiag?.running ? "ok" : "warn"}`}>
-                        {discordDiag?.running ? "🟢 Çalışıyor" : "⚪ Kapalı"}
+                        {discordDiag?.running ? t.discordProcessRunning : t.discordProcessStopped}
                       </span>
                     </div>
                   </div>
@@ -2074,9 +2105,9 @@ export default function App() {
                       className="tool-btn"
                       onClick={handleRepairDiscord}
                       disabled={repairingDiscord}
-                      title="Discord güncelleme kilitlerini kaldırır, relay ayarını pekiştirir ve temiz başlatır"
+                      title={t.discordRepairTitle}
                     >
-                      {repairingDiscord ? "Onarılıyor..." : "🔄 Discord'u Sıfırla ve Temiz Başlat"}
+                      {repairingDiscord ? t.discordRepairBusy : t.discordRepairBtn}
                     </button>
                   </div>
                 </div>
@@ -2086,34 +2117,56 @@ export default function App() {
             {/* SUBTAB 3: KİŞİSELLEŞTİRME */}
             {prefSubTab === "kisisellestir" && (
               <>
+                {/* Dil Seçimi / Language Selector */}
+                <div className="pref-section-title">{t.languageSectionTitle}</div>
+                <div className="pref-card">
+                  <div className="field-group" style={{ marginBottom: 0 }}>
+                    <label className="field-label" style={{ marginBottom: 6 }}>{t.languageLabel}</label>
+                    <select
+                      className="select-input"
+                      value={lang}
+                      onChange={(e) => setLang(e.target.value as LangCode)}
+                    >
+                      {LANGUAGES.map((l) => (
+                        <option key={l.code} value={l.code}>
+                          {l.flag} {l.nativeName} ({l.name})
+                        </option>
+                      ))}
+                    </select>
+                    <span className="field-hint" style={{ marginTop: 6 }}>
+                      {t.languageDesc}
+                    </span>
+                  </div>
+                </div>
+
                 {/* Görsel Temalar */}
-                <div className="pref-section-title">🎨 Görsel Temalar</div>
+                <div className="pref-section-title">{t.visualThemesSectionTitle}</div>
                 <div className="pref-card">
                   <div className="field-group">
-                    <label className="field-label" style={{ marginBottom: 6 }}>Arayüz Teması</label>
+                    <label className="field-label" style={{ marginBottom: 6 }}>{t.themeLabel}</label>
                     <div className="theme-grid">
-                      {THEMES.map((t) => {
-                        const isActive = theme === t.id;
+                      {THEMES.map((itemTheme) => {
+                        const isActive = theme === itemTheme.id;
                         return (
                           <button
-                            key={t.id}
+                            key={itemTheme.id}
                             type="button"
                             className={`theme-badge-btn ${isActive ? "active" : ""}`}
                             style={{
-                              background: t.bg,
-                              borderColor: isActive ? t.accent : `${t.accent}44`,
+                              background: itemTheme.bg,
+                              borderColor: isActive ? itemTheme.accent : `${itemTheme.accent}44`,
                               color: isActive ? "#ffffff" : "#c5cbd8",
                             }}
-                            onClick={() => setTheme(t.id)}
+                            onClick={() => setTheme(itemTheme.id)}
                           >
                             <span
                               className="theme-color-dot"
                               style={{
-                                background: t.dot,
-                                boxShadow: isActive ? `0 0 8px ${t.dot}` : `0 0 4px ${t.dot}88`,
+                                background: itemTheme.dot,
+                                boxShadow: isActive ? `0 0 8px ${itemTheme.dot}` : `0 0 4px ${itemTheme.dot}88`,
                               }}
                             />
-                            <span className="theme-badge-name">{t.name}</span>
+                            <span className="theme-badge-name">{itemTheme.name}</span>
                           </button>
                         );
                       })}
@@ -2122,12 +2175,12 @@ export default function App() {
                 </div>
 
                 {/* Görünüm & Deneyim Tercihleri */}
-                <div className="pref-section-title">✨ Görünüm & Deneyim Tercihleri</div>
+                <div className="pref-section-title">{t.appearanceSectionTitle}</div>
                 <div className="pref-card">
                   <div className="pref-row">
                     <div className="pref-meta">
-                      <span className="pref-name">Platform Kart Yoğunluğu</span>
-                      <span className="pref-desc">Platform ve oyun kartlarının ekrandaki boyutunu ve sıkılığını ayarlar.</span>
+                      <span className="pref-name">{t.densityLabel}</span>
+                      <span className="pref-desc">{t.densityDesc}</span>
                     </div>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button
@@ -2140,7 +2193,7 @@ export default function App() {
                         }}
                         onClick={() => setCardDensity("comfortable")}
                       >
-                        Büyük
+                        {t.densityComfortable}
                       </button>
                       <button
                         className={`secondary-btn ${cardDensity === "compact" ? "active" : ""}`}
@@ -2152,7 +2205,7 @@ export default function App() {
                         }}
                         onClick={() => setCardDensity("compact")}
                       >
-                        Kompakt
+                        {t.densityCompact}
                       </button>
                     </div>
                   </div>
@@ -2161,8 +2214,8 @@ export default function App() {
 
                   <div className="pref-row">
                     <div className="pref-meta">
-                      <span className="pref-name">Neon Parıltı & Cam Efekti (Ambient Glow)</span>
-                      <span className="pref-desc">Arayüz kartları ve başlıklarındaki modern cam ve neon parıltı efektlerini kontrol eder. Kapatıldığında daha sade mat bir görünüm sunar.</span>
+                      <span className="pref-name">{t.ambientGlowLabel}</span>
+                      <span className="pref-desc">{t.ambientGlowDesc}</span>
                     </div>
                     <div
                       className={`switch ${ambientGlow ? "checked" : ""}`}
@@ -2176,8 +2229,8 @@ export default function App() {
 
                   <div className="pref-row">
                     <div className="pref-meta">
-                      <span className="pref-name">Akustik Ses Efektleri</span>
-                      <span className="pref-desc">Bypass koruması açılıp kapandığında hafif futuristik akustik geri bildirim sinyali verir.</span>
+                      <span className="pref-name">{t.soundEffectsLabel}</span>
+                      <span className="pref-desc">{t.soundEffectsDesc}</span>
                     </div>
                     <div
                       className={`switch ${soundEnabled ? "checked" : ""}`}
@@ -2215,7 +2268,7 @@ export default function App() {
         <div className="modal-backdrop" onClick={() => setShowAddModal(false)}>
           <div className="modal-dialog modal-wide" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">Yeni Platform / Oyun Ekle</h3>
+              <h3 className="modal-title">{t.addModalTitle}</h3>
               <button className="modal-close" onClick={() => setShowAddModal(false)}>
                 ✕
               </button>
@@ -2228,13 +2281,13 @@ export default function App() {
                   className={`segment-btn ${addModalTab === "scan" ? "active" : ""}`}
                   onClick={() => setAddModalTab("scan")}
                 >
-                  ⚡ Bilgisayardan Seç
+                  {t.scanTab}
                 </button>
                 <button
                   className={`segment-btn ${addModalTab === "manual" ? "active" : ""}`}
                   onClick={() => setAddModalTab("manual")}
                 >
-                  🌐 Manuel Web / Link
+                  {t.manualTab}
                 </button>
               </div>
 
@@ -2243,23 +2296,23 @@ export default function App() {
                   <div className="scanned-search-row">
                     <input
                       className="scanned-search-input"
-                      placeholder="🔍 Oyun veya uygulama adı ara..."
+                      placeholder={t.scannedSearchPlaceholder}
                       value={scannedSearch}
                       onChange={(e) => setScannedSearch(e.target.value)}
                     />
                     <button
                       className="pick-exe-btn"
                       onClick={handlePickExeFile}
-                      title="Bilgisayardaki herhangi bir .exe dosyasını seçin"
+                      title={t.pickExeTitle}
                     >
-                      📁 .exe Seç
+                      {t.pickExeBtn}
                     </button>
                     <button
                       className="refresh-scan-btn"
                       onClick={loadScannedApps}
-                      title="Listeyi yeniden tara"
+                      title={t.refreshScanTitle}
                     >
-                      🔄
+                      {t.refreshScanBtn}
                     </button>
                   </div>
 
@@ -2268,42 +2321,42 @@ export default function App() {
                       className={`scanned-filter-pill ${scannedFilter === "all" ? "active" : ""}`}
                       onClick={() => setScannedFilter("all")}
                     >
-                      Tümü ({scannedApps.length})
+                      {t.scannedAllFilter(scannedApps.length)}
                     </button>
                     <button
                       className={`scanned-filter-pill ${scannedFilter === "games" ? "active" : ""}`}
                       onClick={() => setScannedFilter("games")}
                     >
-                      🎮 Oyunlar ({scannedApps.filter((a) => a.category === "game").length})
+                      {t.scannedGamesFilter(scannedApps.filter((a) => a.category === "game").length)}
                     </button>
                     <button
                       className={`scanned-filter-pill ${scannedFilter === "apps" ? "active" : ""}`}
                       onClick={() => setScannedFilter("apps")}
                     >
-                      📱 Uygulamalar ({scannedApps.filter((a) => a.category === "app").length})
+                      {t.scannedAppsFilter(scannedApps.filter((a) => a.category === "app").length)}
                     </button>
                     <button
                       className={`scanned-filter-pill ${scannedFilter === "running" ? "active" : ""}`}
                       onClick={() => setScannedFilter("running")}
                     >
-                      🟢 Çalışıyor ({runningScannedCount})
+                      {t.scannedRunningFilter(runningScannedCount)}
                     </button>
                     <button
                       className={`scanned-filter-pill ${scannedFilter === "stopped" ? "active" : ""}`}
                       onClick={() => setScannedFilter("stopped")}
                     >
-                      ⚪ Kapalı ({stoppedScannedCount})
+                      {t.scannedStoppedFilter(stoppedScannedCount)}
                     </button>
                   </div>
 
                   <div className="scanned-list">
                     {loadingScannedApps ? (
                       <div className="scanned-loading">
-                        <span>⏳ Oyun ve uygulamalar taranıyor...</span>
+                        <span>{t.scanningApps}</span>
                       </div>
                     ) : filteredScannedApps.length === 0 ? (
                       <div className="scanned-empty">
-                        <span>Eşleşen oyun veya uygulama bulunamadı.</span>
+                        <span>{t.noAppsFound}</span>
                       </div>
                     ) : (
                       filteredScannedApps.map((item) => {
@@ -2323,7 +2376,7 @@ export default function App() {
                               <span className="scanned-app-icon">{item.icon}</span>
                               <div className="scanned-app-info">
                                 <span className="scanned-app-name" title={item.name}>
-                                  {item.name}
+                                    {item.name}
                                 </span>
                                 <span className="scanned-app-exe">{item.exe_name}</span>
                               </div>
@@ -2331,19 +2384,19 @@ export default function App() {
 
                             <div className="scanned-app-right">
                               {item.is_running ? (
-                                <span className="scanned-status running">🟢 Çalışıyor</span>
+                                <span className="scanned-status running">{t.runningStatus}</span>
                               ) : (
-                                <span className="scanned-status stopped">⚪ Kapalı</span>
+                                <span className="scanned-status stopped">{t.stoppedStatus}</span>
                               )}
                               {isAlreadyAdded ? (
-                                <span className="scanned-added-badge">✓ Eklendi</span>
+                                <span className="scanned-added-badge">{t.alreadyAddedBadge}</span>
                               ) : (
                                 <button
                                   className="scanned-add-btn"
                                   onClick={() => handleAddScannedApp(item)}
-                                  title={`${item.name} uygulamasını ekle ve korumaya al`}
+                                  title={t.addToListTitle(item.name)}
                                 >
-                                  + Ekle
+                                  {t.addToListBtn}
                                 </button>
                               )}
                             </div>
@@ -2356,50 +2409,50 @@ export default function App() {
               ) : (
                 <div className="manual-web-content">
                   <div className="field-group">
-                    <label className="field-label">Kategori Seçin</label>
+                    <label className="field-label">{t.categoryLabel}</label>
                     <div className="modal-segmented">
                       <button
                         className={`segment-btn ${addCategory === "app" ? "active" : ""}`}
                         onClick={() => setAddCategory("app")}
                       >
-                        📱 Uygulama
+                        {t.appCategoryBtn}
                       </button>
                       <button
                         className={`segment-btn ${addCategory === "game" ? "active" : ""}`}
                         onClick={() => setAddCategory("game")}
                       >
-                        🎮 Oyun
+                        {t.gameCategoryBtn}
                       </button>
                     </div>
                   </div>
 
                   <div className="field-group">
-                    <label className="field-label">Platform / Oyun Adı</label>
+                    <label className="field-label">{t.platformNameLabel}</label>
                     <input
                       className="text-input"
-                      placeholder="örn: Kick, Wattpad, Roblox..."
+                      placeholder={t.platformNamePlaceholder}
                       value={addName}
                       onChange={(e) => setAddName(e.target.value)}
                     />
                   </div>
 
                   <div className="field-group">
-                    <label className="field-label">Web Sitesi veya Ana Alan Adı</label>
+                    <label className="field-label">{t.websiteLabel}</label>
                     <input
                       className="text-input"
-                      placeholder="örn: kick.com veya https://kick.com"
+                      placeholder={t.websitePlaceholder}
                       value={addUrl}
                       onChange={(e) => setAddUrl(e.target.value)}
                     />
                     <span className="field-hint">
-                      Girdiğiniz adrese göre web sitesi, API ve CDN sunucuları otomatik yapılandırılır.
+                      {t.websiteHint}
                     </span>
                   </div>
 
                   {expandedPreview.length > 0 && (
                     <div className="expanded-preview-box">
                       <span className="preview-label">
-                        ✨ Otomatik Algılanan URL ve Alan Adları ({expandedPreview.length}):
+                        {t.detectedDomainsLabel(expandedPreview.length)}
                       </span>
                       <div className="preview-chips">
                         {expandedPreview.map((d) => (
@@ -2416,7 +2469,7 @@ export default function App() {
 
             <div className="modal-footer">
               <button className="secondary-btn" onClick={() => setShowAddModal(false)}>
-                Kapat
+                {t.closeBtn}
               </button>
               {addModalTab === "manual" && (
                 <button
@@ -2424,7 +2477,7 @@ export default function App() {
                   onClick={handleSaveCustomPlatform}
                   disabled={!addName.trim() && !addUrl.trim() && expandedPreview.length === 0}
                 >
-                  Kaydet ve Aktif Et
+                  {t.saveActivateBtn}
                 </button>
               )}
             </div>
@@ -2437,7 +2490,7 @@ export default function App() {
         <div className="modal-backdrop" onClick={() => setShowHealthModal(false)}>
           <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3 className="modal-title">🩺 Sistem & Ağ Sağlık Raporu</h3>
+              <h3 className="modal-title">{t.healthTitle}</h3>
               <button className="modal-close" onClick={() => setShowHealthModal(false)}>
                 ✕
               </button>
@@ -2447,66 +2500,66 @@ export default function App() {
               {checkingHealth ? (
                 <div className="boot-container" style={{ height: 160 }}>
                   <div className="spinner" />
-                  <p>Ağ ve çekirdek katmanları test ediliyor...</p>
+                  <p>{t.healthTesting}</p>
                 </div>
               ) : networkHealth ? (
                 <div className="health-list">
                   <div className="health-item">
                     <div className="health-item-left">
                       <div>
-                        <div className="health-item-title">WinDivert Sürücüsü</div>
-                        <div className="health-item-desc">Kernel seviyesi paket desync motoru</div>
+                        <div className="health-item-title">{t.windivertLabel}</div>
+                        <div className="health-item-desc">{t.windivertDesc}</div>
                       </div>
                     </div>
                     <span className={`health-status-badge ${networkHealth.windivert_driver_ok ? "ok" : "fail"}`}>
-                      {networkHealth.windivert_driver_ok ? "Aktif & Hazır" : "Hata"}
+                      {networkHealth.windivert_driver_ok ? t.healthActive : t.healthError}
                     </span>
                   </div>
 
                   <div className="health-item">
                     <div className="health-item-left">
                       <div>
-                        <div className="health-item-title">Sistem Proxy Durumu</div>
-                        <div className="health-item-desc">Windows ayarlarında proxy kapalı, sıfır lag</div>
+                        <div className="health-item-title">{t.proxyLabel}</div>
+                        <div className="health-item-desc">{t.proxyDesc}</div>
                       </div>
                     </div>
                     <span className={`health-status-badge ${networkHealth.proxy_clean ? "ok" : "fail"}`}>
-                      {networkHealth.proxy_clean ? "Temiz (0 Ping)" : "Proxy Algılandı"}
+                      {networkHealth.proxy_clean ? t.healthClean : t.healthProxyDetected}
                     </span>
                   </div>
 
                   <div className="health-item">
                     <div className="health-item-left">
                       <div>
-                        <div className="health-item-title">DoH Şifreli DNS</div>
-                        <div className="health-item-desc">TLS 1.3 ({networkHealth.active_doh_provider})</div>
+                        <div className="health-item-title">{t.dohLabel}</div>
+                        <div className="health-item-desc">{t.dohDesc(networkHealth.active_doh_provider)}</div>
                       </div>
                     </div>
                     <span className={`health-status-badge ${networkHealth.doh_ok ? "ok" : "fail"}`}>
-                      {networkHealth.doh_ok ? "Bağlantı Başarılı" : "Hata"}
+                      {networkHealth.doh_ok ? t.healthOk : t.healthFail}
                     </span>
                   </div>
 
                   <div className="health-item">
                     <div className="health-item-left">
                       <div>
-                        <div className="health-item-title">Discord Güncelleyici Tüneli</div>
-                        <div className="health-item-desc">127.0.0.1:18809 yerel aktarıcı</div>
+                        <div className="health-item-title">{t.discordRelayLabel}</div>
+                        <div className="health-item-desc">{t.discordRelayDesc}</div>
                       </div>
                     </div>
                     <span className={`health-status-badge ${networkHealth.discord_relay_ok ? "ok" : "fail"}`}>
-                      {networkHealth.discord_relay_ok ? "Dinliyor" : "Kapalı"}
+                      {networkHealth.discord_relay_ok ? t.healthListening : t.healthClosed}
                     </span>
                   </div>
                 </div>
               ) : (
-                <p className="empty-state">Teşhis verisi alınamadı.</p>
+                <p className="empty-state">{t.noHealthData}</p>
               )}
             </div>
 
             <div className="modal-footer">
               <button className="primary-btn" onClick={() => setShowHealthModal(false)}>
-                Tamam
+                {t.okBtn}
               </button>
             </div>
           </div>
@@ -2518,42 +2571,27 @@ export default function App() {
         <div className="modal-overlay" onClick={() => setShowEulaModal(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
             <div className="modal-header">
-              <span className="modal-title">📜 Kullanım Şartları ve Gizlilik (EULA)</span>
+              <span className="modal-title">{t.eulaTitle}</span>
               <button className="modal-close-btn" onClick={() => setShowEulaModal(false)}>✕</button>
             </div>
             <div className="modal-body">
               <div className="eula-modal-body">
-                <h4>1. Gizlilik ve Sıfır Veri Toplama Güvencesi</h4>
-                <p>
-                  Slipstream, tamamen bilgisayarınızda yerel (client-side) olarak çalışan bağımsız bir masaüstü aracıdır.
-                  Uygulamamız hiçbir kişisel verinizi, IP adresinizi, tarama geçmişinizi veya kimlik bilginizi toplamaz,
-                  kaydetmez ve hiçbir uzak sunucuya aktarmaz.
-                </p>
+                <h4>{t.eulaSection1}</h4>
+                <p>{t.eulaSection1Text}</p>
 
-                <h4>2. Yerel Ağ ve Paket İşleme İlkeleri</h4>
-                <p>
-                  Slipstream, harici bir VPN veya uzak proxy sunucusu değildir. İnternet trafiğinizi üçüncü parti sunuculardan
-                  geçirmez; bu sayede ping ve hız kaybı yaşatmaz. Ağ paketleri yalnızca sizin cihazınız ile hedef sunucu arasında
-                  desenkronize edilir.
-                </p>
+                <h4>{t.eulaSection2}</h4>
+                <p>{t.eulaSection2Text}</p>
 
-                <h4>3. Sorumluluk Reddi (Disclaimer)</h4>
-                <p>
-                  Slipstream, eğitim, araştırma ve sansürsüz özgür internet erişimi amacıyla geliştirilmiş açık kaynaklı bir yazılımdır.
-                  Yazılım "olduğu gibi" (AS-IS) sunulmakta olup; kullanıcının ziyaret ettiği web siteleri ve internet faaliyetlerinden
-                  tamamen kullanıcının kendisi sorumludur.
-                </p>
+                <h4>{t.eulaSection3}</h4>
+                <p>{t.eulaSection3Text}</p>
 
-                <h4>4. Lisans ve Kapsam</h4>
-                <p>
-                  Bu yazılım MIT Açık Kaynak Lisansı kapsamında sunulmaktadır. Sadece kişisel bilgisayar ortamında kullanılmak üzere
-                  tasarlanmış olup, mobil veya sunucu platformları için ticari veri toplama yükümlülüklerine tabi değildir.
-                </p>
+                <h4>{t.eulaSection4}</h4>
+                <p>{t.eulaSection4Text}</p>
               </div>
             </div>
             <div className="modal-footer">
               <button className="primary-btn" onClick={() => setShowEulaModal(false)}>
-                Anladım ve Kabul Ediyorum
+                {t.agreeBtn}
               </button>
             </div>
           </div>
@@ -2569,7 +2607,7 @@ export default function App() {
             <div className="modal-header">
               <div className="modal-title-with-badge">
                 <span className="suggestion-sparkle">✨</span>
-                <h3 className="modal-title">Akıllı Alan Adı & CDN Önerisi</h3>
+                <h3 className="modal-title">{t.suggestionTitle}</h3>
               </div>
               <button className="modal-close" onClick={() => setShowSuggestionModal(false)}>
                 ✕
@@ -2579,7 +2617,7 @@ export default function App() {
             <div className="modal-body">
               <div className="suggestion-intro-card">
                 <div className="suggestion-target">
-                  <span className="target-label">Hedef Alan Adı:</span>
+                  <span className="target-label">{t.targetDomainLabel}</span>
                   <span className="target-domain">{domainSuggestion.base_domain}</span>
                 </div>
                 <p className="suggestion-explanation">
@@ -2589,20 +2627,20 @@ export default function App() {
 
               <div className="suggestion-list-header">
                 <span className="suggestion-list-title">
-                  Tespit Edilen Bağlı Sunucular ({selectedSuggestions.length}/{domainSuggestion.suggestions.length}):
+                  {t.detectedServers(selectedSuggestions.length, domainSuggestion.suggestions.length)}
                 </span>
                 <div className="suggestion-select-actions">
                   <button
                     className="chip-action-btn"
                     onClick={() => setSelectedSuggestions(domainSuggestion.suggestions)}
                   >
-                    Tümünü Seç
+                    {t.selectAllSuggestions}
                   </button>
                   <button
                     className="chip-action-btn"
                     onClick={() => setSelectedSuggestions([])}
                   >
-                    Temizle
+                    {t.clearSuggestions}
                   </button>
                 </div>
               </div>
@@ -2625,7 +2663,7 @@ export default function App() {
                       />
                       <span className="suggestion-domain-name">{dom}</span>
                       {dom === domainSuggestion.base_domain && (
-                        <span className="domain-primary-tag">Ana Alan Adı</span>
+                        <span className="domain-primary-tag">{t.primaryDomainTag}</span>
                       )}
                     </label>
                   );
@@ -2637,9 +2675,9 @@ export default function App() {
               <button
                 className="secondary-btn"
                 onClick={() => handleConfirmSuggestions(true)}
-                title="Yalnızca ana adresi ekler"
+                title={t.addOnlyMain(domainSuggestion.base_domain)}
               >
-                Yalnızca "{domainSuggestion.base_domain}" Ekle
+                {t.addOnlyMain(domainSuggestion.base_domain)}
               </button>
               <button
                 className="primary-btn"
@@ -2647,8 +2685,8 @@ export default function App() {
                 disabled={selectedSuggestions.length === 0}
               >
                 {selectedSuggestions.length > 1
-                  ? `Önerilenleri ve Alan Adını Ekle (${selectedSuggestions.length})`
-                  : "Seçileni Ekle"}
+                  ? t.addSelectedBtn(selectedSuggestions.length)
+                  : t.addSelectedSingle}
               </button>
             </div>
           </div>
@@ -2662,7 +2700,7 @@ export default function App() {
             <div className="modal-header">
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 16 }}>🚀</span>
-                <h3 className="modal-title">v{updateInfo.latest_version} Sürüm Yenilikleri</h3>
+                <h3 className="modal-title">{t.releaseNotesTitle(updateInfo.latest_version)}</h3>
               </div>
               <button className="modal-close" onClick={() => setShowReleaseNotesModal(false)}>✕</button>
             </div>
@@ -2696,7 +2734,7 @@ export default function App() {
             </div>
             <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 10 }}>
               <button className="secondary-btn" onClick={() => setShowReleaseNotesModal(false)}>
-                Kapat
+                {t.closeBtn2}
               </button>
               <button
                 className="primary-btn"
@@ -2707,7 +2745,7 @@ export default function App() {
                 disabled={updating}
                 style={{ padding: "8px 16px" }}
               >
-                {updating ? "İndiriliyor..." : "Şimdi Güncelle"}
+                {updating ? t.downloadingText : t.updateNowBtn2}
               </button>
             </div>
           </div>
@@ -2717,14 +2755,14 @@ export default function App() {
       {/* Flyout Footer */}
       <footer className="footer">
         <span className="footer-status">
-          {on ? "🟢 Koruma Devrede (0 Ping)" : "⚪ Servis Kapalı"}
+          {on ? t.protectionActive : t.serviceOff}
         </span>
         <button
           className="quit-btn"
-          title="Uygulamadan ve arka plan servisinden tamamen çık"
+          title={t.quitAppTitle}
           onClick={handleQuitApp}
         >
-          Tamamen Kapat
+          {t.quitAppBtn}
         </button>
       </footer>
     </div>

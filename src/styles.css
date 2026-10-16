@@ -3360,5 +3360,69 @@ html.is-toast, body.is-toast, body.is-toast #root {
   white-space: nowrap;
 }
 
+/* RTL Support */
+[dir="rtl"] {
+  direction: rtl;
+  text-align: right;
+}
+
+[dir="rtl"] .titlebar,
+[dir="rtl"] .footer,
+[dir="rtl"] .pref-row,
+[dir="rtl"] .app-card,
+[dir="rtl"] .update-banner {
+  flex-direction: row-reverse;
+}
+
+[dir="rtl"] .tab-bar {
+  flex-direction: row-reverse;
+}
+
+[dir="rtl"] .search-bar {
+  flex-direction: row-reverse;
+}
+
+[dir="rtl"] .brand,
+[dir="rtl"] .app-card-left,
+[dir="rtl"] .app-card-right,
+[dir="rtl"] .scanned-app-item,
+[dir="rtl"] .scanned-app-left,
+[dir="rtl"] .scanned-app-right,
+[dir="rtl"] .health-item,
+[dir="rtl"] .health-item-left,
+[dir="rtl"] .suggestion-row,
+[dir="rtl"] .modal-header,
+[dir="rtl"] .subtabs-bar,
+[dir="rtl"] .category-pills,
+[dir="rtl"] .quick-actions-bar,
+[dir="rtl"] .scanned-search-row,
+[dir="rtl"] .scanned-filter-pills,
+[dir="rtl"] .modal-segmented,
+[dir="rtl"] .modal-footer,
+[dir="rtl"] .add-row {
+  flex-direction: row-reverse;
+}
+
+[dir="rtl"] .search-icon {
+  left: auto;
+  right: 10px;
+  margin-right: 0;
+  margin-left: 0;
+}
+
+[dir="rtl"] .search-clear {
+  right: auto;
+  left: 8px;
+}
+
+[dir="rtl"] .search-input {
+  padding: 0 34px 0 28px !important;
+}
+
+[dir="rtl"] .alert-toast {
+  flex-direction: row-reverse;
+}
+
+
 
 
