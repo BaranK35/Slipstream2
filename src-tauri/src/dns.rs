@@ -260,8 +260,8 @@ pub fn restore_dns(dir: &Path) {
     let state_file = dir.join(STATE_FILE);
     if state_file.exists() {
         let _ = fs::remove_file(state_file);
+        reset_all_adapters();
     }
-    reset_all_adapters();
 }
 
 /// Restores any network adapter that was previously modified.

@@ -394,7 +394,7 @@ pub const APPS: &[AppProfile] = &[
             "steampowered.com", "steamcommunity.com", "steamstatic.com",
             "steamcontent.com", "steamserver.net", "steam-chat.com",
         ],
-        exes: &["steam.exe"],
+        exes: &["steam.exe", "cs2.exe", "csgo.exe"],
         voice: false,
         probe: "https://store.steampowered.com",
     },
@@ -408,7 +408,7 @@ pub const APPS: &[AppProfile] = &[
             "epicgames.com", "unrealengine.com", "fortnite.com",
             "ol.epicgames.com", "launcher-public-service-prod06.ol.epicgames.com",
         ],
-        exes: &["EpicGamesLauncher.exe"],
+        exes: &["EpicGamesLauncher.exe", "FortniteClient-Win64-Shipping.exe", "FortniteLauncher.exe"],
         voice: false,
         probe: "https://store.epicgames.com",
     },
@@ -422,7 +422,7 @@ pub const APPS: &[AppProfile] = &[
             "minecraft.net", "mojang.com", "minecraftservices.com",
             "launcher.mojang.com", "authlib.injector.moe",
         ],
-        exes: &["MinecraftLauncher.exe", "javaw.exe"],
+        exes: &["MinecraftLauncher.exe", "javaw.exe", "Minecraft.exe"],
         voice: false,
         probe: "https://www.minecraft.net",
     },
@@ -436,7 +436,7 @@ pub const APPS: &[AppProfile] = &[
             "riotgames.com", "leagueoflegends.com", "playvalorant.com",
             "riotcdn.net", "pvp.net",
         ],
-        exes: &["RiotClientServices.exe", "VALORANT.exe", "LeagueClient.exe"],
+        exes: &["RiotClientServices.exe", "VALORANT.exe", "Valorant-Win64-Shipping.exe", "LeagueClient.exe", "League of Legends.exe"],
         voice: false,
         probe: "https://playvalorant.com",
     },
@@ -451,7 +451,7 @@ pub const APPS: &[AppProfile] = &[
             "blizzard.com", "battle.net", "bnetcmsus-a.akamaihd.net",
             "ea.com", "origin.com", "ubisoft.com", "uplay.com",
         ],
-        exes: &["RockstarGamesLauncher.exe", "Battle.net.exe", "EADesktop.exe"],
+        exes: &["RockstarGamesLauncher.exe", "Battle.net.exe", "EADesktop.exe", "GTA5.exe", "Overwatch.exe"],
         voice: false,
         probe: "https://www.rockstargames.com",
     },
@@ -682,4 +682,64 @@ pub fn probe_urls(cfg: &Config) -> Vec<String> {
         v.push("https://discord.com".into());
     }
     v
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct DomainSuggestionResult {
+    pub input: String,
+    pub base_domain: String,
+    pub display_name: String,
+    pub suggestions: Vec<String>,
+    pub explanation: String,
+}
+
+pub fn get_domain_suggestions(raw: &str) -> DomainSuggestionResult {
+    let raw_trimmed = raw.trim();
+    let norm = normalize(raw_trimmed).unwrap_or_else(|| raw_trimmed.to_lowercase());
+    let lower = norm.to_lowercase();
+
+    // 1) Check if matches a known profile
+    for app in APPS {
+        let is_match = app.id == lower
+            || app.name.to_lowercase() == lower
+            || app.domains.iter().any(|d| *d == lower || lower.ends_with(d));
+        if is_match {
+            let mut list: Vec<String> = app.domains.iter().map(|s| s.to_string()).collect();
+            list.sort();
+            list.dedup();
+            let count = list.len();
+            return DomainSuggestionResult {
+                input: raw_trimmed.to_string(),
+                base_domain: norm,
+                display_name: app.name.to_string(),
+                suggestions: list,
+                explanation: format!(
+                    "'{name}' servisi için {count} adet resmi API, CDN ve oyun/medya sunucu adresi bulundu. Modern istemciler bağlantı kurarken bu sunucuları eşzamanlı kullanır. Engellemeleri tamamen aşmak için hepsinin birlikte eklenmesi önerilir.",
+                    name = app.name,
+                    count = count
+                ),
+            };
+        }
+    }
+
+    // 2) Expand generic domain
+    let mut expanded = expand_domains(&norm);
+    if !expanded.contains(&norm) {
+        expanded.insert(0, norm.clone());
+    }
+    expanded.sort();
+    expanded.dedup();
+    let count = expanded.len();
+
+    DomainSuggestionResult {
+        input: raw_trimmed.to_string(),
+        base_domain: norm.clone(),
+        display_name: norm.clone(),
+        suggestions: expanded,
+        explanation: format!(
+            "'{base}' adresi ve bağlı servisleri için {count} adet ilişkili CDN, API, oturum ve içerik sunucusu tespit edildi. Sayfa yükleme hızını artırmak ve içerik blokajlarını önlemek için bu adreslerin eklenmesi önerilir.",
+            base = norm,
+            count = count
+        ),
+    }
 }

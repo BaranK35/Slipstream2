@@ -32,6 +32,10 @@ pub struct CustomPlatform {
     pub category: String, // "app" or "game"
     pub icon: String,
     pub domains: Vec<String>,
+    #[serde(default)]
+    pub exe_name: Option<String>,
+    #[serde(default)]
+    pub exe_path: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -63,10 +67,16 @@ pub struct Config {
     pub doh_provider: String,
     #[serde(default)]
     pub gaming_mode: bool,
+    #[serde(default)]
+    pub game_priority_boost: bool,
     #[serde(default = "default_true")]
     pub auto_healing: bool,
     #[serde(default = "default_true")]
     pub auto_update: bool,
+
+    // === Canlı Oyun & Uygulama Algılayıcı ===
+    #[serde(default)]
+    pub process_detection_mode: bool,
 }
 
 impl Default for Config {
@@ -86,8 +96,10 @@ impl Default for Config {
             hide_on_blur: true,
             doh_provider: "cloudflare".into(),
             gaming_mode: false,
+            game_priority_boost: false,
             auto_healing: true,
             auto_update: true,
+            process_detection_mode: false,
         }
     }
 }
@@ -184,6 +196,142 @@ pub fn is_windows_autostart() -> bool {
         .unwrap_or_default();
 
     out.contains("Slipstream")
+}
+
+/// Applies or reverts Windows TCP/IP registry and network stack tweaks for low latency gaming.
+/// When enabled:
+/// - Disables Nagle's algorithm (TcpAckFrequency = 1, TCPNoDelay = 1 on network interfaces)
+/// - Disables Windows Multimedia Network Throttling (NetworkThrottlingIndex = 0xFFFFFFFF)
+/// - Sets SystemResponsiveness = 0 (100% responsiveness for gaming and foreground processes)
+/// - Configures TCP auto-tuning and Receive Side Scaling (RSS) for multi-core packet processing
+/// When disabled:
+/// - Restores Windows defaults cleanly: NetworkThrottlingIndex = 10, SystemResponsiveness = 20,
+///   removes interface registry overrides.
+pub fn apply_gaming_network_tweaks(enable: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        let sys_profile_key = r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile";
+        let interfaces_key = r"HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces";
+
+        if enable {
+            // 1) Multimedia Network Throttling & Responsiveness
+            let _ = Command::new("reg.exe")
+                .args(["add", sys_profile_key, "/v", "NetworkThrottlingIndex", "/t", "REG_DWORD", "/d", "0xFFFFFFFF", "/f"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+
+            let _ = Command::new("reg.exe")
+                .args(["add", sys_profile_key, "/v", "SystemResponsiveness", "/t", "REG_DWORD", "/d", "0", "/f"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+
+            // 2) Query network interface subkeys and apply TcpAckFrequency = 1 and TCPNoDelay = 1
+            if let Ok(out) = Command::new("reg.exe")
+                .args(["query", interfaces_key])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+            {
+                let text = String::from_utf8_lossy(&out.stdout);
+                for line in text.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("HKEY_LOCAL_MACHINE\\") {
+                        let subkey = trimmed.trim_start_matches("HKEY_LOCAL_MACHINE\\");
+                        let full_sub = format!("HKLM\\{}", subkey);
+                        let _ = Command::new("reg.exe")
+                            .args(["add", &full_sub, "/v", "TcpAckFrequency", "/t", "REG_DWORD", "/d", "1", "/f"])
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .output();
+                        let _ = Command::new("reg.exe")
+                            .args(["add", &full_sub, "/v", "TCPNoDelay", "/t", "REG_DWORD", "/d", "1", "/f"])
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .output();
+                    }
+                }
+            }
+
+            // 3) Global TCP autotuning & RSS
+            let _ = Command::new("netsh")
+                .args(["int", "tcp", "set", "global", "autotuninglevel=normal"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+            let _ = Command::new("netsh")
+                .args(["int", "tcp", "set", "global", "rss=enabled"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+        } else {
+            // Restore clean Windows defaults
+            let _ = Command::new("reg.exe")
+                .args(["add", sys_profile_key, "/v", "NetworkThrottlingIndex", "/t", "REG_DWORD", "/d", "10", "/f"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+
+            let _ = Command::new("reg.exe")
+                .args(["add", sys_profile_key, "/v", "SystemResponsiveness", "/t", "REG_DWORD", "/d", "20", "/f"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+
+            if let Ok(out) = Command::new("reg.exe")
+                .args(["query", interfaces_key])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+            {
+                let text = String::from_utf8_lossy(&out.stdout);
+                for line in text.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("HKEY_LOCAL_MACHINE\\") {
+                        let subkey = trimmed.trim_start_matches("HKEY_LOCAL_MACHINE\\");
+                        let full_sub = format!("HKLM\\{}", subkey);
+                        let _ = Command::new("reg.exe")
+                            .args(["delete", &full_sub, "/v", "TcpAckFrequency", "/f"])
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .output();
+                        let _ = Command::new("reg.exe")
+                            .args(["delete", &full_sub, "/v", "TCPNoDelay", "/f"])
+                            .creation_flags(CREATE_NO_WINDOW)
+                            .output();
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub const WINWS_BYTES: &[u8] = include_bytes!("../../engine/winws.exe");
+pub const WINDIVERT_DLL_BYTES: &[u8] = include_bytes!("../../engine/WinDivert.dll");
+pub const WINDIVERT_SYS_BYTES: &[u8] = include_bytes!("../../engine/WinDivert64.sys");
+pub const CYGWIN_DLL_BYTES: &[u8] = include_bytes!("../../engine/cygwin1.dll");
+pub const LICENSE_BYTES: &[u8] = include_bytes!("../../engine/WinDivert-LICENSE.txt");
+
+/// Ensures engine binaries exist in target directory, extracting embedded copies if needed.
+pub fn ensure_engine_files(target_dir: &std::path::Path) -> Result<PathBuf, String> {
+    let winws_path = target_dir.join("winws.exe");
+    let dll_path = target_dir.join("WinDivert.dll");
+    let sys_path = target_dir.join("WinDivert64.sys");
+    let cygwin_path = target_dir.join("cygwin1.dll");
+    let lic_path = target_dir.join("WinDivert-LICENSE.txt");
+
+    fs::create_dir_all(target_dir).map_err(|e| e.to_string())?;
+
+    let write_if_needed = |path: &PathBuf, data: &[u8]| -> std::io::Result<()> {
+        let need_write = match fs::metadata(path) {
+            Ok(meta) => meta.len() != data.len() as u64,
+            Err(_) => true,
+        };
+        if need_write {
+            fs::write(path, data)?;
+        }
+        Ok(())
+    };
+
+    write_if_needed(&winws_path, WINWS_BYTES).map_err(|e| e.to_string())?;
+    write_if_needed(&dll_path, WINDIVERT_DLL_BYTES).map_err(|e| e.to_string())?;
+    write_if_needed(&sys_path, WINDIVERT_SYS_BYTES).map_err(|e| e.to_string())?;
+    write_if_needed(&cygwin_path, CYGWIN_DLL_BYTES).map_err(|e| e.to_string())?;
+    write_if_needed(&lic_path, LICENSE_BYTES).map_err(|e| e.to_string())?;
+
+    Ok(winws_path)
 }
 
 pub struct Engine {
@@ -309,10 +457,15 @@ pub fn kill_all_winws() {
         Self::kill_all_winws();
 
         if !self.bin.exists() {
-            return Err(format!(
-                "Motor bulunamadı: {}. winws.exe ve WinDivert dosyalarının mevcut olduğundan emin olun.",
-                self.bin.display()
-            ));
+            if let Some(p) = self.bin.parent() {
+                let _ = ensure_engine_files(p);
+            }
+            if !self.bin.exists() {
+                return Err(format!(
+                    "Motor bulunamadı: {}. winws.exe ve WinDivert dosyalarının mevcut olduğundan emin olun.",
+                    self.bin.display()
+                ));
+            }
         }
         fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
 
@@ -362,6 +515,9 @@ pub fn kill_all_winws() {
         let has_discord = cfg.enabled_apps.iter().any(|a| a == "discord");
         self.ensure_relay(has_discord);
 
+        // 6) Low-latency gaming optimizations (TCP NoDelay, Network Throttling removal, System Responsiveness)
+        apply_gaming_network_tweaks(cfg.gaming_mode);
+
         Ok(())
     }
 
@@ -399,19 +555,23 @@ pub fn kill_all_winws() {
         self.ensure_relay(false);
         proxy::clean_stale_proxy();
 
-        // Retried stop for WinDivert driver to ensure kernel handle release
-        for _ in 0..4 {
-            let out = Command::new("sc")
-                .args(["stop", "windivert"])
-                .creation_flags(0x0800_0000)
-                .output();
-            if let Ok(o) = out {
-                let s = String::from_utf8_lossy(&o.stdout);
-                if s.contains("STOPPED") || s.contains("1062") || s.contains("1060") {
-                    break;
-                }
+        // Cleanly restore network defaults on engine stop (disable gaming mode tweaks)
+        apply_gaming_network_tweaks(false);
+
+        // Fast stop for WinDivert driver to ensure kernel handle release
+        let out = Command::new("sc")
+            .args(["stop", "windivert"])
+            .creation_flags(0x0800_0000)
+            .output();
+        if let Ok(o) = out {
+            let s = String::from_utf8_lossy(&o.stdout);
+            if !s.contains("STOPPED") && !s.contains("1062") && !s.contains("1060") {
+                thread::sleep(Duration::from_millis(40));
+                let _ = Command::new("sc")
+                    .args(["stop", "windivert"])
+                    .creation_flags(0x0800_0000)
+                    .output();
             }
-            thread::sleep(Duration::from_millis(80));
         }
     }
 }
@@ -436,6 +596,8 @@ mod tests {
         assert!(cfg.start_minimized, "start_minimized must be true on fresh install");
         assert!(cfg.minimize_to_tray, "minimize_to_tray must be true on fresh install");
         assert!(cfg.manage_dns, "manage_dns must be true on fresh install");
+        assert!(!cfg.gaming_mode, "gaming_mode must default to false");
+        assert!(!cfg.game_priority_boost, "game_priority_boost must default to false");
     }
 
     #[test]
@@ -526,4 +688,24 @@ mod tests {
         let map_contains_gamejoin = dns::ROBLOX_HOST_MAP.iter().any(|(d, _)| *d == "gamejoin.roblox.com");
         assert!(map_contains_gamejoin, "ROBLOX_HOST_MAP must include gamejoin.roblox.com to defeat ISP DNS poisoning");
     }
+
+    #[test]
+    fn test_gaming_mode_and_priority_boost_serialization() {
+        let json = r#"{
+            "isp": "turk-telekom",
+            "strategy": "fake-split-md5sig",
+            "enabled_apps": ["roblox"],
+            "custom_domains": [],
+            "custom_exes": [],
+            "gaming_mode": true,
+            "game_priority_boost": true
+        }"#;
+        let cfg: Config = serde_json::from_str(json).expect("Deserialization should succeed");
+        assert!(cfg.gaming_mode, "gaming_mode should deserialize as true");
+        assert!(cfg.game_priority_boost, "game_priority_boost should deserialize as true");
+        let serialized = serde_json::to_string(&cfg).expect("Serialization should succeed");
+        assert!(serialized.contains("\"gaming_mode\":true"));
+        assert!(serialized.contains("\"game_priority_boost\":true"));
+    }
 }
+

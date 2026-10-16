@@ -18,10 +18,10 @@ export default function ToastNotification() {
       }
     });
 
-    // Auto-dismiss after 5 seconds
+    // Auto-dismiss after 5.5 seconds
     timerRef.current = setTimeout(() => {
       handleDismiss();
-    }, 5200);
+    }, 5500);
 
     return () => {
       unlistenPromise.then((unlisten) => unlisten());
@@ -37,12 +37,13 @@ export default function ToastNotification() {
   };
 
   const handleOpenMain = (e: React.MouseEvent) => {
-    // If close button was clicked, don't open main
     if ((e.target as HTMLElement).closest(".toast-close-btn")) {
       return;
     }
     invoke("open_main_from_toast").catch(() => {});
   };
+
+  const isUpdateNotice = customMsg?.toLowerCase().includes("güncelle") ?? false;
 
   return (
     <div className="toast-wrapper" onClick={handleOpenMain}>
@@ -57,23 +58,34 @@ export default function ToastNotification() {
         <div className="toast-center">
           <div className="toast-title-row">
             <span className="toast-app-name">Slipstream</span>
-            <span className="toast-badge">ARKA PLANDA AKTİF</span>
+            <span className={`toast-badge ${isUpdateNotice ? "update" : ""}`}>
+              {isUpdateNotice ? "⚡ GÜNCELLEME" : "ARKA PLANDA AKTİF"}
+            </span>
           </div>
           <p className="toast-body-text">
-            {customMsg || "Ağ koruması devrede. Sistem tepsisinden uygulamayı dilediğiniz zaman açabilirsiniz."}
+            {customMsg || "Ağ koruması devrede. Sistem tepsisinden dilediğiniz zaman açabilirsiniz."}
           </p>
         </div>
 
-        <button
-          className="toast-close-btn"
-          title="Bildirimi Kapat"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleDismiss();
-          }}
-        >
-          ✕
-        </button>
+        <div className="toast-actions">
+          <button
+            className="toast-open-btn"
+            title="Aç"
+            onClick={handleOpenMain}
+          >
+            Aç
+          </button>
+          <button
+            className="toast-close-btn"
+            title="Bildirimi Kapat"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDismiss();
+            }}
+          >
+            ✕
+          </button>
+        </div>
 
         <div className="toast-progress-track">
           <div className="toast-progress-fill" />
