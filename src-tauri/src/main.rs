@@ -136,6 +136,45 @@ fn set_file_dialog_active(active: bool) {
 }
 
 #[tauri::command]
+fn set_window_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("main") {
+        let scale = win.scale_factor().unwrap_or(1.0);
+        let cur_pos = win.outer_position().unwrap_or(tauri::PhysicalPosition::new(0, 0));
+        let cur_size = win.outer_size().unwrap_or(tauri::PhysicalSize::new(
+            (380.0 * scale).round() as u32,
+            (620.0 * scale).round() as u32,
+        ));
+
+        let target_logical_w = if expanded { 820.0 } else { 380.0 };
+        let target_phys_w = (target_logical_w * scale).round() as i32;
+        let cur_phys_w = cur_size.width as i32;
+
+        let delta_phys_w = target_phys_w - cur_phys_w;
+
+        if delta_phys_w.abs() > 5 {
+            let mut new_x = cur_pos.x - delta_phys_w;
+            if let Ok(Some(mon)) = win.current_monitor() {
+                let min_x = mon.work_area().position.x + 10;
+                if new_x < min_x {
+                    new_x = min_x;
+                }
+            } else if new_x < 10 {
+                new_x = 10;
+            }
+
+            if expanded {
+                let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(new_x, cur_pos.y)));
+                let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(target_logical_w, 620.0)));
+            } else {
+                let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(target_logical_w, 620.0)));
+                let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(new_x, cur_pos.y)));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn close_app(app: tauri::AppHandle, s: State<AppState>) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.hide();
@@ -1234,10 +1273,9 @@ fn position_bottom_right(w: &WebviewWindow) -> Result<(), Box<dyn std::error::Er
         let work_area = m.work_area();
         let scale = m.scale_factor();
         
-        let (win_width, win_height) = match w.outer_size() {
-            Ok(s) if s.width > 50 && s.height > 50 => (s.width as i32, s.height as i32),
-            _ => ((380.0 * scale).round() as i32, (620.0 * scale).round() as i32),
-        };
+        let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(380.0, 620.0)));
+        let win_width = (380.0 * scale).round() as i32;
+        let win_height = (620.0 * scale).round() as i32;
 
         let margin_x = (16.0 * scale).round() as i32;
         let margin_y = (16.0 * scale).round() as i32;
@@ -1818,7 +1856,8 @@ fn main() {
             get_detected_active_apps,
             suggest_related_domains,
             scan_apps,
-            pick_exe_file
+            pick_exe_file,
+            set_window_expanded
         ])
         .build(tauri::generate_context!())
         .expect("error while building Slipstream")

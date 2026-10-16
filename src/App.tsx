@@ -608,7 +608,23 @@ export default function App() {
   useEffect(() => {
     if (showAddModal) {
       loadScannedApps();
+      invoke("set_window_expanded", { expanded: true }).catch(() => {});
+    } else {
+      invoke("set_window_expanded", { expanded: false }).catch(() => {});
     }
+    return () => {
+      invoke("set_window_expanded", { expanded: false }).catch(() => {});
+    };
+  }, [showAddModal]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && showAddModal) {
+        setShowAddModal(false);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [showAddModal]);
 
   async function loadScannedApps() {
@@ -2288,7 +2304,7 @@ export default function App() {
                   </div>
                 </div>
               ) : (
-                <>
+                <div className="manual-web-content">
                   <div className="field-group">
                     <label className="field-label">Kategori Seçin</label>
                     <div className="modal-segmented">
@@ -2344,7 +2360,7 @@ export default function App() {
                       </div>
                     </div>
                   )}
-                </>
+                </div>
               )}
             </div>
 
