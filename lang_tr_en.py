@@ -39,8 +39,10 @@ TR = {
     "heroPitchOff": "Seçili servisler için tek tıkla korumayı başlatın.",
 
     # Ping Radar
-    "discordPingTitle": "Discord CDN/API sunucusu gecikmesi (Ses odaları Frankfurt/Rotterdam merkezlidir: ~60-80ms)",
-    "discordPing": "Discord:",
+    "discordPingTitle": "Discord CDN/API sunucusu bağlantı gecikmesi",
+    "discordPing": "Discord CDN:",
+    "discordVoicePingTitle": "Discord Avrupa RTC ses sunucuları gecikmesi (Frankfurt/Rotterdam)",
+    "discordVoicePing": "Discord Ses:",
     "dohDnsTitle": "Cloudflare DoH gecikmesi",
     "dohDns": "DoH DNS:",
     "noExtraLatencyTitle": "Yerel Proxy Yok - Doğrudan Hat Erişimi",
@@ -130,6 +132,8 @@ TR = {
     "processDetectionLabel": "Otomatik Süreç & Oyun Algılama",
     "dynamicBadge": "",
     "processDetectionDesc": "Eklediğiniz veya seçtiğiniz oyun/uygulamaların tiki açıksa, çalıştıkları an otomatik algılanır ve tüm internet trafiği doğrudan koruma tünelinden geçirilir.",
+    "processDetectionOffTitle": "Kapalıyken",
+    "processDetectionOffDesc": "Arka planda hiçbir işlem taraması yapılmaz (sıfır CPU ve RAM kullanımı). Seçili oyun ve uygulamalarınız alan adı düzeyinde kesintisiz korunmaya devam eder.",
     "detectedProcessesTitle": "Canlı Algılanan Aktif Süreçler:",
     "processRunningTag": lambda name: f"🟢 {name} (Çalışıyor)",
     "noProcessesRunningTag": "⚪ Şu an çalışan desteklenen oyun/uygulama süreci bulunmuyor",
@@ -385,8 +389,10 @@ EN = {
     "heroPitchOff": "One-click protection for selected platforms.",
 
     # Ping Radar
-    "discordPingTitle": "Discord CDN/API server latency (Voice channels are hosted in Frankfurt/Rotterdam: ~60-80ms)",
-    "discordPing": "Discord:",
+    "discordPingTitle": "Discord CDN/API server connection latency",
+    "discordPing": "Discord CDN:",
+    "discordVoicePingTitle": "Discord Europe RTC voice server latency (Frankfurt/Rotterdam)",
+    "discordVoicePing": "Discord Voice:",
     "dohDnsTitle": "Cloudflare DoH latency",
     "dohDns": "DoH DNS:",
     "noExtraLatencyTitle": "No Local Proxy - Direct Route",
@@ -476,6 +482,8 @@ EN = {
     "processDetectionLabel": "Automatic Process & Game Detection",
     "dynamicBadge": "",
     "processDetectionDesc": "When toggled on for an app or game, it is automatically detected upon launch and all of its network traffic is routed through the protection tunnel.",
+    "processDetectionOffTitle": "When Turned Off",
+    "processDetectionOffDesc": "Background process scanning is completely disabled (zero CPU and RAM usage). Selected games and apps continue to be protected uninterrupted at the domain level.",
     "detectedProcessesTitle": "Currently Detected Active Processes:",
     "processRunningTag": lambda name: f"🟢 {name} (Running)",
     "noProcessesRunningTag": "⚪ No supported game or app processes currently running",

@@ -623,10 +623,12 @@ async fn test_platform_latency(host: String) -> Option<u64> {
 #[tauri::command]
 async fn check_latency() -> serde_json::Value {
     let discord = proxy::measure_latency("updates.discord.com", 443).await;
+    let discord_voice = proxy::measure_latency("ec2.eu-central-1.amazonaws.com", 443).await;
     let cloudflare = proxy::measure_latency("1.1.1.1", 443).await;
     let google = proxy::measure_latency("dns.google", 443).await;
     json!({
         "discord": discord,
+        "discord_voice": discord_voice,
         "cloudflare": cloudflare,
         "google": google,
     })

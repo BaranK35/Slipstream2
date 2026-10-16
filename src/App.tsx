@@ -104,6 +104,7 @@ function playTone(type: "on" | "off" | "click" | "toggle") {
 
 type LatencyStats = {
   discord: number | null;
+  discord_voice: number | null;
   cloudflare: number | null;
   google: number | null;
 };
@@ -208,6 +209,7 @@ export default function App() {
   // Live Latency Radar
   const [latency, setLatency] = useState<LatencyStats>({
     discord: null,
+    discord_voice: null,
     cloudflare: null,
     google: null,
   });
@@ -1310,6 +1312,13 @@ export default function App() {
                     {latency.discord !== null ? `${latency.discord}ms` : "—"}
                   </span>
                 </div>
+                <div className="latency-badge" title={t.discordVoicePingTitle}>
+                  <span className="latency-dot voice" />
+                  <span className="latency-label">{t.discordVoicePing}</span>
+                  <span className="latency-val">
+                    {latency.discord_voice !== null ? `${latency.discord_voice}ms` : "—"}
+                  </span>
+                </div>
                 <div className="latency-badge" title={t.dohDnsTitle}>
                   <span className="latency-dot cloudflare" />
                   <span className="latency-label">{t.dohDns}</span>
@@ -1827,6 +1836,9 @@ export default function App() {
                       </div>
                       <span className="pref-desc">
                         {t.processDetectionDesc}
+                      </span>
+                      <span className="pref-desc" style={{ marginTop: 6, display: "block", color: "var(--cyan, #38bdf8)", fontSize: 11.5 }}>
+                        💡 <strong>{t.processDetectionOffTitle}:</strong> <span style={{ color: "var(--text-dim, #94a3b8)" }}>{t.processDetectionOffDesc}</span>
                       </span>
                     </div>
                     <div
