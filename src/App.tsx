@@ -318,6 +318,7 @@ export default function App() {
   // Portable & Live process detection
   const [isPortable, setIsPortable] = useState(false);
   const [detectedProcesses, setDetectedProcesses] = useState<string[]>([]);
+  const [isWindowVisible, setIsWindowVisible] = useState<boolean>(!document.hidden);
   const lastUpdateAttemptRef = useRef<number>(0);
   const busyRef = useRef<boolean>(false);
 
@@ -516,36 +517,45 @@ export default function App() {
       setCfg((prev) => (prev ? { ...prev, strategy: e.payload } : null));
     });
 
+    const unlistenVis = listen<boolean>("app_window_visibility", (e) => {
+      const vis = Boolean(e.payload);
+      setIsWindowVisible(vis);
+      if (vis) {
+        document.documentElement.classList.remove("window-hidden");
+      } else {
+        document.documentElement.classList.add("window-hidden");
+      }
+    });
+
+    const onVisibilityChange = () => {
+      const vis = !document.hidden;
+      setIsWindowVisible(vis);
+      if (vis) {
+        document.documentElement.classList.remove("window-hidden");
+      } else {
+        document.documentElement.classList.add("window-hidden");
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    // Sync initial visibility directly with backend window state
+    invoke<boolean>("is_window_visible")
+      .then((vis) => {
+        setIsWindowVisible(vis);
+        if (vis) {
+          document.documentElement.classList.remove("window-hidden");
+        } else {
+          document.documentElement.classList.add("window-hidden");
+        }
+      })
+      .catch(() => {});
+
     // Check initial Discord diagnosis
     invoke<DiscordDiagnosis>("diagnose_discord").then(setDiscordDiag).catch(() => {});
 
-    // Check for updates periodically in the background every 60 seconds (1 minute)
-    const updateTimer = setInterval(() => {
-      invoke<{
-        has_update: boolean;
-        current_version: string;
-        latest_version: string;
-        release_notes: string;
-        download_url: string;
-      }>("check_for_updates")
-        .then((info) => {
-          setUpdateInfo(info);
-          if (info.has_update) {
-            invoke<Cfg>("get_config").then((currentCfg) => {
-              if (currentCfg.auto_update && info.download_url) {
-                const now = Date.now();
-                if (now - lastUpdateAttemptRef.current > 15 * 60 * 1000) {
-                  handleApplyUpdate(info.download_url);
-                }
-              }
-            });
-          }
-        })
-        .catch(() => {});
-    }, 60 * 1000);
-
     return () => {
-      clearInterval(updateTimer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      unlistenVis.then((f) => f());
       unlistenAutotune.then((f) => f());
       unlistenWatchdog.then((f) => f());
       unlistenState.then((f) => f());
@@ -556,8 +566,9 @@ export default function App() {
     };
   }, []);
 
-  // Periodic Latency Ping Radar
+  // Latency Ping Radar - only checks once on window display, zero continuous polling
   useEffect(() => {
+    if (!isWindowVisible) return;
     let active = true;
     const fetchLatency = async () => {
       try {
@@ -571,12 +582,10 @@ export default function App() {
     };
 
     fetchLatency();
-    const interval = setInterval(fetchLatency, 6000);
     return () => {
       active = false;
-      clearInterval(interval);
     };
-  }, [on]);
+  }, [on, isWindowVisible]);
 
   useEffect(() => {
     if (showLog && logEndRef.current) {
@@ -644,7 +653,6 @@ export default function App() {
 
   useEffect(() => {
     if (showAddModal) {
-      loadScannedApps();
       invoke("set_window_expanded", { expanded: true }).catch(() => {});
     } else {
       invoke("set_window_expanded", { expanded: false }).catch(() => {});
@@ -748,6 +756,10 @@ export default function App() {
         return 0;
       });
   }, [allPlatforms, platformFilter, searchQuery, cfg?.enabled_apps, cfg?.process_detection_mode, detectedProcesses]);
+
+  if (!isWindowVisible) {
+    return <div id="hibernation-sleep-node" style={{ display: "none" }} />;
+  }
 
   if (!cat || !cfg) {
     return (
@@ -2350,6 +2362,20 @@ export default function App() {
                     {loadingScannedApps ? (
                       <div className="scanned-loading">
                         <span>{t.scanningApps}</span>
+                      </div>
+                    ) : scannedApps.length === 0 ? (
+                      <div className="scanned-initial-prompt" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "48px 16px", textAlign: "center", gap: "14px" }}>
+                        <div style={{ fontSize: "2.2rem" }}>🔍</div>
+                        <div style={{ fontSize: "13px", color: "var(--text-muted)", maxWidth: "320px", lineHeight: "1.5" }}>
+                          Sisteminizde yüklü olan oyun ve uygulamaları listelemek için aşağıdaki butona basın.
+                        </div>
+                        <button
+                          className="refresh-scan-btn"
+                          style={{ width: "auto", padding: "8px 24px", height: "36px", fontSize: "13px", display: "inline-flex", gap: "8px", alignItems: "center" }}
+                          onClick={loadScannedApps}
+                        >
+                          ⚡ Yüklü Uygulamaları Tara
+                        </button>
                       </div>
                     ) : filteredScannedApps.length === 0 ? (
                       <div className="scanned-empty">

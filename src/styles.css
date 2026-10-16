@@ -27,6 +27,15 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Hibernation mode when window is minimized/hidden in tray: zero GPU / zero CPU */
+.window-hidden,
+.window-hidden *,
+.window-hidden *::before,
+.window-hidden *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -106,49 +115,33 @@ html, body {
   position: relative;
 }
 
-/* Floating Ambient Glass Orbs */
+/* Lightweight Ambient Glass Atmosphere - 0% GPU overhead */
 .window-frame::before {
   content: "";
   position: absolute;
-  top: -100px;
-  right: -80px;
-  width: 380px;
-  height: 380px;
-  background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
+  top: -80px;
+  right: -60px;
+  width: 340px;
+  height: 340px;
+  background: radial-gradient(circle, var(--accent-glow) 0%, transparent 68%);
   border-radius: 50%;
   pointer-events: none;
-  filter: blur(85px);
-  opacity: 0.65;
+  opacity: 0.45;
   z-index: 0;
-  animation: floatOrb1 20s ease-in-out infinite alternate;
 }
 
 .window-frame::after {
   content: "";
   position: absolute;
-  bottom: -110px;
-  left: -80px;
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, var(--cyan-glow) 0%, transparent 70%);
+  bottom: -90px;
+  left: -70px;
+  width: 360px;
+  height: 360px;
+  background: radial-gradient(circle, var(--cyan-glow) 0%, transparent 68%);
   border-radius: 50%;
   pointer-events: none;
-  filter: blur(95px);
-  opacity: 0.55;
+  opacity: 0.35;
   z-index: 0;
-  animation: floatOrb2 25s ease-in-out infinite alternate;
-}
-
-@keyframes floatOrb1 {
-  0% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(-35px, 45px) scale(1.1); }
-  100% { transform: translate(25px, -25px) scale(0.95); }
-}
-
-@keyframes floatOrb2 {
-  0% { transform: translate(0, 0) scale(1); }
-  50% { transform: translate(45px, -35px) scale(1.12); }
-  100% { transform: translate(-25px, 35px) scale(0.93); }
 }
 
 /* Custom Title Bar with Glass Acrylic */
@@ -158,9 +151,7 @@ html, body {
   justify-content: space-between;
   height: 38px;
   padding: 0 12px 0 14px;
-  background: rgba(14, 18, 32, 0.68);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: rgba(14, 18, 32, 0.95);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   cursor: default;
   flex-shrink: 0;
@@ -327,7 +318,6 @@ html, body {
   height: 80px;
   background: radial-gradient(circle, var(--accent-glow) 0%, transparent 70%);
   pointer-events: none;
-  filter: blur(24px);
   opacity: 0.65;
 }
 
@@ -395,16 +385,6 @@ html, body {
   border-color: rgba(16, 185, 129, 0.9);
   background: radial-gradient(circle, rgba(16, 185, 129, 0.35) 0%, rgba(6, 26, 18, 0.92) 100%);
   box-shadow: 0 0 32px rgba(16, 185, 129, 0.5), inset 0 0 16px rgba(16, 185, 129, 0.35);
-  animation: powerGlowPulse 2.6s ease-in-out infinite alternate;
-}
-
-@keyframes powerGlowPulse {
-  0% {
-    box-shadow: 0 0 24px rgba(16, 185, 129, 0.4), 0 0 0 0 rgba(16, 185, 129, 0.25), inset 0 0 14px rgba(16, 185, 129, 0.3);
-  }
-  100% {
-    box-shadow: 0 0 42px rgba(16, 185, 129, 0.75), 0 0 0 8px rgba(16, 185, 129, 0), inset 0 0 20px rgba(16, 185, 129, 0.5);
-  }
 }
 
 .power-button.on .power-ring {
@@ -2609,20 +2589,7 @@ html.is-toast, body.is-toast, body.is-toast #root {
   height: 9px;
   border-radius: 50%;
   background: #10b981;
-  border: 2px solid #0d1222;
-  animation: pulseBeacon 1.8s infinite ease-out;
-}
-
-@keyframes pulseBeacon {
-  0% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.75);
-  }
-  70% {
-    box-shadow: 0 0 0 7px rgba(16, 185, 129, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
-  }
+  box-shadow: 0 0 6px #10b981;
 }
 
 .toast-center {

@@ -73,8 +73,12 @@ fn save_config(s: State<AppState>, cfg: Config) {
     let is_on = s.engine.lock().unwrap().is_on();
     if is_on {
         engine::apply_gaming_network_tweaks(cfg.gaming_mode);
-    }
-    if !cfg.game_priority_boost {
+        if cfg.game_priority_boost {
+            manage_game_process_priorities(&cfg, &get_running_processes());
+        } else {
+            restore_all_boosted_game_priorities();
+        }
+    } else {
         restore_all_boosted_game_priorities();
     }
     cfg.save(&s.engine.lock().unwrap().dir);
@@ -94,6 +98,9 @@ fn is_engine_on(s: State<AppState>) -> bool {
 async fn start(app: tauri::AppHandle, s: State<'_, AppState>, cfg: Config) -> Result<(), String> {
     let res = s.engine.lock().unwrap().start(&cfg);
     if res.is_ok() {
+        if cfg.game_priority_boost {
+            manage_game_process_priorities(&cfg, &get_running_processes());
+        }
         let _ = app.emit("engine_state_changed", true);
     }
     res
@@ -101,9 +108,19 @@ async fn start(app: tauri::AppHandle, s: State<'_, AppState>, cfg: Config) -> Re
 
 #[tauri::command]
 async fn stop(app: tauri::AppHandle, s: State<'_, AppState>) -> Result<(), String> {
+    restore_all_boosted_game_priorities();
     s.engine.lock().unwrap().stop();
     let _ = app.emit("engine_state_changed", false);
     Ok(())
+}
+
+#[tauri::command]
+fn refresh_game_priorities(cfg: Config) {
+    if cfg.game_priority_boost {
+        manage_game_process_priorities(&cfg, &get_running_processes());
+    } else {
+        restore_all_boosted_game_priorities();
+    }
 }
 
 #[tauri::command]
@@ -129,7 +146,14 @@ async fn check_network_health(provider: String) -> proxy::NetworkHealth {
 #[tauri::command]
 fn hide_window(window: WebviewWindow) {
     LAST_BLUR_HIDE_MS.store(now_ms(), std::sync::atomic::Ordering::SeqCst);
+    let _ = window.emit("app_window_visibility", false);
     let _ = window.hide();
+    schedule_memory_trim();
+}
+
+#[tauri::command]
+fn is_window_visible(window: WebviewWindow) -> bool {
+    window.is_visible().unwrap_or(false)
 }
 
 #[tauri::command]
@@ -287,6 +311,7 @@ fn is_portable() -> bool {
 pub struct ProcessItem {
     pub pid: u32,
     pub name: String,
+    pub parent_pid: u32,
 }
 
 #[cfg(target_os = "windows")]
@@ -329,6 +354,7 @@ fn get_running_processes() -> Vec<ProcessItem> {
             procs.push(ProcessItem {
                 pid: entry.th32ProcessID,
                 name: exe_name,
+                parent_pid: entry.th32ParentProcessID,
             });
             if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
                 break;
@@ -348,23 +374,65 @@ fn get_running_process_names() -> Vec<String> {
     get_running_processes().into_iter().map(|p| p.name).collect()
 }
 
-#[allow(dead_code)]
+/// Trims memory working set of Slipstream and all child WebView2 processes down to minimal RAM.
 #[cfg(target_os = "windows")]
-fn trim_working_set() {
+pub fn trim_all_slipstream_memory() {
     #[link(name = "kernel32")]
     extern "system" {
         fn GetCurrentProcess() -> isize;
+        fn GetCurrentProcessId() -> u32;
+        fn OpenProcess(dwDesiredAccess: u32, bInheritHandle: i32, dwProcessId: u32) -> isize;
         fn SetProcessWorkingSetSize(hProcess: isize, dwMinimumWorkingSetSize: usize, dwMaximumWorkingSetSize: usize) -> i32;
+        fn CloseHandle(hObject: isize) -> i32;
     }
     unsafe {
         let h_proc = GetCurrentProcess();
         SetProcessWorkingSetSize(h_proc, usize::MAX, usize::MAX);
     }
+
+    let my_pid = unsafe { GetCurrentProcessId() };
+    let procs = get_running_processes();
+
+    let mut child_pids = std::collections::HashSet::new();
+    child_pids.insert(my_pid);
+
+    for _ in 0..3 {
+        for p in &procs {
+            if child_pids.contains(&p.parent_pid) {
+                child_pids.insert(p.pid);
+            }
+        }
+    }
+
+    const PROCESS_SET_QUOTA: u32 = 0x0100;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+    for pid in child_pids {
+        if pid == my_pid {
+            continue;
+        }
+        let h = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if h != 0 {
+            unsafe {
+                SetProcessWorkingSetSize(h, usize::MAX, usize::MAX);
+                CloseHandle(h);
+            }
+        }
+    }
 }
 
-#[allow(dead_code)]
 #[cfg(not(target_os = "windows"))]
-fn trim_working_set() {}
+pub fn trim_all_slipstream_memory() {}
+
+pub fn schedule_memory_trim() {
+    trim_all_slipstream_memory();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        trim_all_slipstream_memory();
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        trim_all_slipstream_memory();
+    });
+}
 
 #[cfg(target_os = "windows")]
 fn set_process_priority(pid: u32, priority_class: u32) -> bool {
@@ -1388,10 +1456,11 @@ fn position_toast_bottom_right(w: &WebviewWindow) -> Result<(), Box<dyn std::err
 #[tauri::command]
 fn open_main_from_toast(app: tauri::AppHandle) {
     if let Some(toast_w) = app.get_webview_window("toast") {
-        let _ = toast_w.hide();
+        let _ = toast_w.destroy();
     }
     if let Some(main_w) = app.get_webview_window("main") {
         let _ = position_bottom_right(&main_w);
+        let _ = main_w.emit("app_window_visibility", true);
         let _ = main_w.show();
         let _ = main_w.unminimize();
         force_bring_to_front(&main_w);
@@ -1402,13 +1471,34 @@ fn open_main_from_toast(app: tauri::AppHandle) {
 #[tauri::command]
 fn hide_toast_notification(app: tauri::AppHandle) {
     if let Some(toast_w) = app.get_webview_window("toast") {
-        let _ = toast_w.hide();
+        let _ = toast_w.destroy();
     }
+    schedule_memory_trim();
 }
 
 #[tauri::command]
 fn show_toast_notification(app: tauri::AppHandle, message: Option<String>) {
     if let Some(toast_w) = app.get_webview_window("toast") {
+        let _ = position_toast_bottom_right(&toast_w);
+        if let Some(ref msg) = message {
+            let _ = toast_w.emit("toast_message", msg.clone());
+        }
+        let _ = toast_w.show();
+    } else if let Ok(toast_w) = tauri::WebviewWindowBuilder::new(
+        &app,
+        "toast",
+        tauri::WebviewUrl::App("index.html?toast=1".into()),
+    )
+    .title("Slipstream Bildirim")
+    .inner_size(360.0, 92.0)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .skip_taskbar(true)
+    .always_on_top(true)
+    .visible(false)
+    .build()
+    {
         let _ = position_toast_bottom_right(&toast_w);
         if let Some(ref msg) = message {
             let _ = toast_w.emit("toast_message", msg.clone());
@@ -1424,9 +1514,12 @@ fn toggle_window(w: &WebviewWindow) {
 
     if is_vis && is_focused && !is_min {
         LAST_BLUR_HIDE_MS.store(now_ms(), Ordering::SeqCst);
+        let _ = w.emit("app_window_visibility", false);
         let _ = w.hide();
+        schedule_memory_trim();
     } else {
         let _ = position_bottom_right(w);
+        let _ = w.emit("app_window_visibility", true);
         let _ = w.show();
         let _ = w.unminimize();
         force_bring_to_front(w);
@@ -1503,6 +1596,7 @@ fn main() {
                             if wait_res == 0 {
                                 if let Some(w) = app_handle.get_webview_window("main") {
                                     let _ = position_bottom_right(&w);
+                                    let _ = w.emit("app_window_visibility", true);
                                     let _ = w.show();
                                     let _ = w.unminimize();
                                     force_bring_to_front(&w);
@@ -1569,134 +1663,17 @@ fn main() {
                 engine: Mutex::new(engine),
             });
 
-            // Background self-healing watchdog for winws, adaptive bypass, and 3. Yöntem process detector
+            // Background lightweight watchdog: checks if winws process died and restarts it if auto_healing is enabled
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let mut last_detected_apps: Vec<String> = Vec::new();
-                let mut auto_probe_cycle: u32 = 0;
                 loop {
-                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    tokio::time::sleep(Duration::from_secs(12)).await;
                     if let Some(state) = app_handle.try_state::<AppState>() {
-                        let (should_probe, eng_dir, current_isp, current_strat) = {
-                            let mut eng = state.engine.lock().unwrap();
-                            let cfg = Config::load(&eng.dir);
+                        let mut eng = state.engine.lock().unwrap();
+                        let cfg = Config::load(&eng.dir);
 
-                            // 1) Auto-healing watchdog
-                            if cfg.auto_healing && eng.is_on() && eng.check_health(&cfg) {
-                                let _ = app_handle.emit("watchdog_recovery", "Motor arka planda otomatik onarıldı.");
-                            }
-
-                            let running_procs = get_running_processes();
-
-                            // 2) Oyun Süreçlerine Yüksek İşlemci Önceliği (Sadece oyunları High Priority yapar, uygulamalara dokunmaz)
-                            manage_game_process_priorities(&cfg, &running_procs);
-
-                            // 3) Canlı Oyun & Uygulama Algılayıcı
-                            if cfg.process_detection_mode {
-                                let running_lower: std::collections::HashSet<String> = running_procs.iter().map(|p| p.name.to_lowercase()).collect();
-                                let mut detected: Vec<String> = Vec::new();
-
-                                for profile in profiles::APPS {
-                                    for exe in profile.exes {
-                                        if running_lower.contains(&exe.to_lowercase()) {
-                                            detected.push(profile.id.to_string());
-                                            break;
-                                        }
-                                    }
-                                }
-                                for plat in &cfg.custom_platforms {
-                                    if let Some(ref exe) = plat.exe_name {
-                                        if running_lower.contains(&exe.to_lowercase()) {
-                                            detected.push(plat.id.clone());
-                                        }
-                                    }
-                                }
-
-                                if detected != last_detected_apps {
-                                    last_detected_apps = detected.clone();
-                                    let _ = app_handle.emit("detected_processes_changed", detected);
-                                }
-                            }
-
-                            let is_on = eng.is_on();
-                            (cfg.auto_healing && is_on, eng.dir.clone(), cfg.isp.clone(), cfg.strategy.clone())
-                        };
-
-                        // 5) Akıllı Kendi Kendini İyileştiren Sistem (Self-Healing Auto-Bypass)
-                        auto_probe_cycle += 1;
-                        if auto_probe_cycle >= 10 {
-                            auto_probe_cycle = 0;
-                            if should_probe {
-                                let mut probe_targets: Vec<&str> = Vec::new();
-                                if let Some(state_tmp) = app_handle.try_state::<AppState>() {
-                                    let eng_tmp = state_tmp.engine.lock().unwrap();
-                                    let active_cfg = Config::load(&eng_tmp.dir);
-                                    if active_cfg.enabled_apps.iter().any(|a| a == "discord") {
-                                        probe_targets.push("https://discord.com");
-                                    }
-                                    if active_cfg.enabled_apps.iter().any(|a| a == "roblox") {
-                                        probe_targets.push("https://www.roblox.com");
-                                    }
-                                }
-                                if probe_targets.is_empty() {
-                                    probe_targets.push("https://discord.com");
-                                }
-
-                                let mut probe_failed = false;
-                                for target in &probe_targets {
-                                    if probe_one(target).await.is_some() {
-                                        probe_failed = true;
-                                        break;
-                                    }
-                                }
-
-                                if probe_failed {
-                                    let candidates = isp::order(&current_isp);
-                                    let mut recovered = false;
-                                    for cand in candidates {
-                                        if current_strat.as_deref() == Some(cand) {
-                                            continue;
-                                        }
-                                        let started = if let Some(state_inner) = app_handle.try_state::<AppState>() {
-                                            let mut eng_inner = state_inner.engine.lock().unwrap();
-                                            let mut test_cfg = Config::load(&eng_dir);
-                                            test_cfg.strategy = Some(cand.to_string());
-                                            eng_inner.start(&test_cfg).is_ok()
-                                        } else {
-                                            false
-                                        };
-
-                                        if started {
-                                            tokio::time::sleep(Duration::from_millis(600)).await;
-                                            let mut cand_ok = true;
-                                            for target in &probe_targets {
-                                                if probe_one(target).await.is_some() {
-                                                    cand_ok = false;
-                                                    break;
-                                                }
-                                            }
-                                            if cand_ok {
-                                                let mut test_cfg = Config::load(&eng_dir);
-                                                test_cfg.strategy = Some(cand.to_string());
-                                                test_cfg.save(&eng_dir);
-                                                let s_name = isp::strategy(cand).name;
-                                                let _ = app_handle.emit("auto_bypass_recovered", format!("⚡ İnternet sağlayıcısı engeli aşıldı! Otomatik olarak '{}' stratejisine geçildi.", s_name));
-                                                let _ = app_handle.emit("strategy_changed", cand.to_string());
-                                                recovered = true;
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    if !recovered {
-                                        if let Some(state_inner) = app_handle.try_state::<AppState>() {
-                                            let mut eng_inner = state_inner.engine.lock().unwrap();
-                                            let mut orig_cfg = Config::load(&eng_dir);
-                                            orig_cfg.strategy = current_strat.clone();
-                                            let _ = eng_inner.start(&orig_cfg);
-                                        }
-                                    }
-                                }
-                            }
+                        if cfg.auto_healing && eng.is_on() && eng.check_health(&cfg) {
+                            let _ = app_handle.emit("watchdog_recovery", "Motor arka planda otomatik onarıldı.");
                         }
                     }
                 }
@@ -1718,7 +1695,7 @@ fn main() {
                     "toggle" => {
                         if let Some(w) = app.get_webview_window("main") {
                             if let Some(toast_w) = app.get_webview_window("toast") {
-                                let _ = toast_w.hide();
+                                let _ = toast_w.destroy();
                             }
                             TRAY_CLICK_STARTED_FOCUSED.store(false, Ordering::SeqCst);
                             LAST_BLUR_HIDE_MS.store(0, Ordering::SeqCst);
@@ -1748,7 +1725,7 @@ fn main() {
                             let _ = w.hide();
                         }
                         if let Some(t) = app.get_webview_window("toast") {
-                            let _ = t.hide();
+                            let _ = t.destroy();
                         }
                         restore_all_boosted_game_priorities();
                         engine::apply_gaming_network_tweaks(false);
@@ -1792,16 +1769,19 @@ fn main() {
                                     if started_focused && is_vis && !is_min {
                                         // Window was active and focused in foreground; click toggles it to hidden
                                         LAST_BLUR_HIDE_MS.store(now, Ordering::SeqCst);
+                                        let _ = w.emit("app_window_visibility", false);
                                         let _ = w.hide();
+                                        trim_all_slipstream_memory();
                                     } else if started_focused && (now - last_blur < 200) {
                                         // Already hidden by blur during this click sequence, keep hidden
                                     } else {
                                         // Window is hidden, minimized, behind other apps/games, or not focused:
                                         // ALWAYS open immediately on the 1st click and bring to front over any game!
                                         if let Some(toast_w) = app.get_webview_window("toast") {
-                                            let _ = toast_w.hide();
+                                            let _ = toast_w.destroy();
                                         }
                                         let _ = position_bottom_right(&w);
+                                        let _ = w.emit("app_window_visibility", true);
                                         let _ = w.show();
                                         let _ = w.unminimize();
                                         force_bring_to_front(&w);
@@ -1824,10 +1804,14 @@ fn main() {
             let is_minimized_arg = args.iter().any(|a| a == "--minimized" || a == "--autostart" || a == "-silent");
             let should_start_minimized = is_minimized_arg || boot_cfg.start_minimized;
 
-            // Pre-position toast window while hidden
+            // Manage toast window according to startup mode
             if let Some(toast_w) = app.get_webview_window("toast") {
-                let _ = position_toast_bottom_right(&toast_w);
-                let _ = toast_w.hide();
+                if !should_start_minimized {
+                    let _ = toast_w.destroy();
+                } else {
+                    let _ = position_toast_bottom_right(&toast_w);
+                    let _ = toast_w.hide();
+                }
             }
 
             // Manage initial window display according to start_minimized configuration
@@ -1836,7 +1820,9 @@ fn main() {
                 let _ = position_bottom_right(&w);
 
                 if should_start_minimized {
+                    let _ = w.emit("app_window_visibility", false);
                     let _ = w.hide();
+                    schedule_memory_trim();
 
                     // Show animated background notification in bottom-right
                     let app_handle = app.handle().clone();
@@ -1845,6 +1831,7 @@ fn main() {
                         show_toast_notification(app_handle, None);
                     });
                 } else {
+                    let _ = w.emit("app_window_visibility", true);
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
@@ -1868,7 +1855,9 @@ fn main() {
                     if HIDE_ON_BLUR.load(Ordering::SeqCst) && window.label() == "main" {
                         if let Ok(true) = window.is_visible() {
                             LAST_BLUR_HIDE_MS.store(now, Ordering::SeqCst);
+                            let _ = window.emit("app_window_visibility", false);
                             let _ = window.hide();
+                            schedule_memory_trim();
                         }
                     }
                 }
@@ -1876,7 +1865,9 @@ fn main() {
             WindowEvent::CloseRequested { api, .. } => {
                 if MINIMIZE_TO_TRAY.load(Ordering::SeqCst) {
                     api.prevent_close();
+                    let _ = window.emit("app_window_visibility", false);
                     let _ = window.hide();
+                    schedule_memory_trim();
                 } else {
                     restore_all_boosted_game_priorities();
                     engine::apply_gaming_network_tweaks(false);
@@ -1940,7 +1931,9 @@ fn main() {
             suggest_related_domains,
             scan_apps,
             pick_exe_file,
-            set_window_expanded
+            set_window_expanded,
+            refresh_game_priorities,
+            is_window_visible
         ])
         .build(tauri::generate_context!())
         .expect("error while building Slipstream")
@@ -1999,12 +1992,12 @@ mod tests {
         ];
 
         let procs = vec![
-            ProcessItem { pid: 1234, name: "Cyberpunk2077.exe".into() },
+            ProcessItem { pid: 1234, name: "Cyberpunk2077.exe".into(), parent_pid: 0 },
         ];
         assert!(is_game_process_running(&cfg, &procs));
 
         let app_procs = vec![
-            ProcessItem { pid: 5678, name: "mychat.exe".into() },
+            ProcessItem { pid: 5678, name: "mychat.exe".into(), parent_pid: 0 },
         ];
         assert!(!is_game_process_running(&cfg, &app_procs), "Non-game custom platforms must NOT be classified as games");
     }

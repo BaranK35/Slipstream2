@@ -20,19 +20,6 @@
         "alwaysOnTop": false,
         "visible": false,
         "shadow": true
-      },
-      {
-        "label": "toast",
-        "title": "Slipstream Bildirim",
-        "width": 360,
-        "height": 92,
-        "resizable": false,
-        "decorations": false,
-        "transparent": true,
-        "skipTaskbar": true,
-        "alwaysOnTop": true,
-        "visible": false,
-        "shadow": false
       }
     ],
     "security": {
