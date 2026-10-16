@@ -354,7 +354,7 @@ export default function App() {
   }, [soundEnabled]);
 
   const getDisplayVersion = (rawVer?: string) => {
-    const v = (rawVer || "0.1.7").replace(/^v/, "");
+    const v = (rawVer || "0.1.8").replace(/^v/, "");
     const parts = v.split(/[.+]/);
     if (parts.length > 3) {
       return `${parts[0]}.${parts[1]}.${parts[2]}`;
@@ -588,22 +588,30 @@ export default function App() {
     return () => clearTimeout(t);
   }, [cfg, on]);
 
-  // When adding URL, dynamically expand domain
+  // When adding URL or Platform Name, dynamically predict and expand domains
   useEffect(() => {
-    if (!addUrl.trim()) {
+    const rawTarget = addUrl.trim() || addName.trim();
+    if (!rawTarget) {
       setExpandedPreview([]);
       return;
     }
     const t = setTimeout(async () => {
       try {
-        const res = await invoke<string[]>("expand_url", { raw: addUrl.trim() });
+        let res = await invoke<string[]>("expand_url", { raw: rawTarget });
+        // If both addUrl and addName are provided and distinct, merge predictions
+        if (addUrl.trim() && addName.trim() && addUrl.trim() !== addName.trim()) {
+          try {
+            const res2 = await invoke<string[]>("expand_url", { raw: addName.trim() });
+            res = Array.from(new Set([...res, ...res2])).sort();
+          } catch {}
+        }
         setExpandedPreview(res);
       } catch {
         setExpandedPreview([]);
       }
     }, 200);
     return () => clearTimeout(t);
-  }, [addUrl]);
+  }, [addUrl, addName]);
 
   useEffect(() => {
     if (showAddModal) {
@@ -723,7 +731,7 @@ export default function App() {
             <img src={logoSvg} alt="Slipstream" className="brand-logo" />
             <div className="status-indicator busy" />
             <span className="brand-name" data-tauri-drag-region>Slipstream</span>
-            <span className="version-pill" title={`Sürüm: v${updateInfo?.current_version || "0.1.7"}`}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+            <span className="version-pill" title={`Sürüm: v${updateInfo?.current_version || "0.1.8"}`}>v{getDisplayVersion(updateInfo?.current_version)}</span>
           </div>
           <div className="window-controls">
             <button className="win-btn minimize" title="Tepsiye Küçült" onClick={() => invoke("hide_window")}>
@@ -926,7 +934,7 @@ export default function App() {
     setBusy(false);
   }
 
-  function handleAddScannedApp(app: ScannedApp) {
+  async function handleAddScannedApp(app: ScannedApp) {
     if (!cfg) return;
 
     const id = "custom_" + app.exe_name.toLowerCase().replace(/[^a-z0-9]/g, "_");
@@ -936,6 +944,21 @@ export default function App() {
       return;
     }
 
+    // Intelligently predict and expand domains in background using app name & exe name
+    let generatedDomains: string[] = [];
+    try {
+      const fromExe = await invoke<string[]>("expand_url", { raw: app.exe_name });
+      const fromName = await invoke<string[]>("expand_url", { raw: app.name });
+      generatedDomains = Array.from(new Set([...(app.domains || []), ...fromExe, ...fromName])).sort();
+    } catch {
+      generatedDomains = app.domains || [];
+    }
+
+    if (generatedDomains.length === 0) {
+      const fallback = app.name.toLowerCase().replace(/[^a-z0-9]/g, "") + ".com";
+      generatedDomains = [fallback];
+    }
+
     const newPlatform: CustomPlatform = {
       id,
       name: app.name,
@@ -943,7 +966,7 @@ export default function App() {
       icon: app.icon || (app.category === "game" ? "🎮" : "📱"),
       exe_name: app.exe_name,
       exe_path: app.exe_path || undefined,
-      domains: app.domains && app.domains.length > 0 ? app.domains : [app.name.toLowerCase().replace(/[^a-z0-9]/g, "") + ".com"],
+      domains: generatedDomains,
     };
 
     const nextExes = [...(cfg.custom_exes || [])];
@@ -958,7 +981,7 @@ export default function App() {
     });
 
     setShowAddModal(false);
-    setSuccessMsg(`"${app.name}" (${app.exe_name}) başarıyla eklendi ve tüm bağlantıları korumaya alındı!`);
+    setSuccessMsg(`"${app.name}" (${app.exe_name}) başarıyla eklendi (${generatedDomains.length} bağlantı noktası arka planda korumaya alındı)!`);
   }
 
   async function handlePickExeFile() {
@@ -980,6 +1003,19 @@ export default function App() {
         return;
       }
 
+      // Intelligently predict and expand domains in background
+      let generatedDomains: string[] = [];
+      try {
+        const fromExe = await invoke<string[]>("expand_url", { raw: exeName });
+        const fromBase = await invoke<string[]>("expand_url", { raw: baseName });
+        generatedDomains = Array.from(new Set([...fromExe, ...fromBase])).sort();
+      } catch {
+        generatedDomains = [];
+      }
+      if (generatedDomains.length === 0) {
+        generatedDomains = [baseName.toLowerCase().replace(/[^a-z0-9]/g, "") + ".com"];
+      }
+
       const newPlatform: CustomPlatform = {
         id,
         name: baseName,
@@ -987,7 +1023,7 @@ export default function App() {
         icon,
         exe_name: exeName,
         exe_path: pickedPath,
-        domains: [baseName.toLowerCase().replace(/[^a-z0-9]/g, "") + ".com"],
+        domains: generatedDomains,
       };
 
       const nextExes = [...(cfg?.custom_exes || [])];
@@ -1002,7 +1038,7 @@ export default function App() {
       });
 
       setShowAddModal(false);
-      setSuccessMsg(`"${baseName}" (${exeName}) başarıyla eklendi ve korumaya alındı!`);
+      setSuccessMsg(`"${baseName}" (${exeName}) başarıyla eklendi (${generatedDomains.length} bağlantı noktası arka planda korumaya alındı)!`);
     } catch (e) {
       setErr("Dosya seçilemedi: " + String(e));
     }
@@ -1014,21 +1050,35 @@ export default function App() {
     } catch {}
   }
 
-  function handleSaveCustomPlatform() {
+  async function handleSaveCustomPlatform() {
     const name = addName.trim();
-    if (!name || expandedPreview.length === 0) {
-      setErr("Lütfen bir isim ve geçerli bir web sitesi / alan adı girin.");
+    const rawTarget = addUrl.trim() || name;
+    if (!name && !rawTarget) {
+      setErr("Lütfen platform adı veya alan adı girin.");
       return;
+    }
+
+    const displayName = name || rawTarget.replace(/^https?:\/\//i, "").split(/[\/?#]/)[0];
+    let finalDomains = expandedPreview;
+    if (finalDomains.length === 0 && rawTarget) {
+      try {
+        finalDomains = await invoke<string[]>("expand_url", { raw: rawTarget });
+      } catch {
+        finalDomains = [];
+      }
+    }
+    if (finalDomains.length === 0) {
+      finalDomains = [displayName.toLowerCase().replace(/[^a-z0-9]/g, "") + ".com"];
     }
 
     const id = "custom_" + Date.now().toString(36);
     const icon = addCategory === "game" ? "🎮" : "🌐";
     const newPlatform: CustomPlatform = {
       id,
-      name,
+      name: displayName,
       category: addCategory,
       icon,
-      domains: expandedPreview,
+      domains: finalDomains,
     };
 
     patch({
@@ -1040,7 +1090,7 @@ export default function App() {
     setAddUrl("");
     setExpandedPreview([]);
     setShowAddModal(false);
-    setSuccessMsg(`"${name}" eklendi ve tüm bağlantıları aktif edildi!`);
+    setSuccessMsg(`"${displayName}" eklendi ve ${finalDomains.length} bağlantı noktası korumaya alındı!`);
   }
 
   async function handleRestartDiscord() {
@@ -1195,7 +1245,7 @@ export default function App() {
           <img src={logoSvg} alt="Slipstream" className="brand-logo" />
           <div className={`status-indicator ${busy ? "busy" : on ? "active" : "inactive"}`} />
           <span className="brand-name" data-tauri-drag-region>Slipstream</span>
-          <span className="version-pill" title={`Sürüm: v${updateInfo?.current_version || "0.1.7"}`}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+          <span className="version-pill" title={`Sürüm: v${updateInfo?.current_version || "0.1.8"}`}>v{getDisplayVersion(updateInfo?.current_version)}</span>
           {isPortable && <span className="portable-pill" title="Taşınabilir Tek Dosya Sürümü">Portable</span>}
         </div>
         <div className="window-controls">
@@ -2372,7 +2422,7 @@ export default function App() {
                 <button
                   className="primary-btn"
                   onClick={handleSaveCustomPlatform}
-                  disabled={!addName.trim() || expandedPreview.length === 0}
+                  disabled={!addName.trim() && !addUrl.trim() && expandedPreview.length === 0}
                 >
                   Kaydet ve Aktif Et
                 </button>

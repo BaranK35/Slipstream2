@@ -467,183 +467,197 @@ pub fn normalize(raw: &str) -> Option<String> {
     ok.then(|| host.to_string())
 }
 
-/// Automatically expands a domain, URL or app/game name to include all subdomains and service endpoints.
-pub fn expand_domains(raw: &str) -> Vec<String> {
-    let lower = raw.trim().to_lowercase();
-    let mut list = Vec::new();
+/// Extracts a clean alphanumeric slug and base domain from any URL, domain, or exe name.
+pub fn extract_slug_and_base(raw: &str) -> (String, String) {
+    let s = raw.trim().to_lowercase();
+    let s = s.split("://").last().unwrap_or(&s);
+    let s = s.split(['/', '?', '#', ':']).next().unwrap_or(s);
+    let s = s.trim_start_matches("www.").trim_matches('.');
+    
+    // Strip common binary executable extensions
+    let clean = s.strip_suffix(".exe")
+        .or_else(|| s.strip_suffix(".msi"))
+        .or_else(|| s.strip_suffix(".bat"))
+        .or_else(|| s.strip_suffix(".cmd"))
+        .unwrap_or(s);
+    
+    // If it has a known domain extension (.com, .net, .org, .gg, .io, .tv, etc.)
+    if clean.contains('.') {
+        let parts: Vec<&str> = clean.split('.').collect();
+        if parts.len() >= 3 {
+            let last = parts[parts.len() - 1];
+            let second_last = parts[parts.len() - 2];
+            if ["com", "co", "org", "net", "edu", "gov"].contains(&second_last) {
+                let tld = format!("{}.{}", second_last, last);
+                let sld = parts[parts.len() - 3];
+                let slug = sld.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>();
+                let base_domain = format!("{}.{}", slug, tld);
+                return (slug, base_domain);
+            }
+        }
+        if parts.len() >= 2 {
+            let tld = parts.last().unwrap();
+            let sld = parts[parts.len() - 2];
+            let slug = sld.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>();
+            let base_domain = format!("{}.{}", slug, tld);
+            return (slug, base_domain);
+        }
+    }
+    
+    // Otherwise treat as plain brand or executable name
+    let slug = clean
+        .replace("-win64-shipping", "")
+        .replace("-win64", "")
+        .replace("_x64", "")
+        .replace("_x86", "")
+        .replace("client", "")
+        .replace("launcher", "");
+    let mut slug = slug.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>();
+    if slug.is_empty() {
+        slug = clean.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>();
+    }
+    let base_domain = format!("{}.com", slug);
+    (slug, base_domain)
+}
 
-    // Check if user entered a known service name or keyword
-    if lower.contains("discord") {
-        list.extend(vec![
+/// Automatically and intelligently predicts, discovers and generates all possible
+/// domain variations, subdomains, CDNs, APIs, socket gateways and infrastructure endpoints
+/// for any given app, game, URL, or executable name.
+pub fn expand_domains(raw: &str) -> Vec<String> {
+    let (slug, base_domain) = extract_slug_and_base(raw);
+    if slug.is_empty() {
+        return Vec::new();
+    }
+
+    let mut set: BTreeSet<String> = BTreeSet::new();
+
+    // 0) Always include the normalized raw domain if it was already valid
+    if let Some(norm) = normalize(raw) {
+        set.insert(norm);
+    }
+
+    // 1) Known presets from apps.rs (Valorant, CS2, LoL, Steam, Epic, Roblox, Spotify, Assetto Corsa, EA, Blizzard, etc.)
+    let preset_domains = crate::apps::get_preset_domains_for_app(&slug, raw);
+    for d in preset_domains {
+        if let Some(norm) = normalize(&d) {
+            set.insert(norm);
+        }
+    }
+
+    // 2) Known built-in service catalog checks
+    let lower = raw.trim().to_lowercase();
+    if lower.contains("discord") || slug == "discord" {
+        set.extend(vec![
             "discord.com", "discord.gg", "discord.co", "discord.media",
             "discord.new", "discord.gift", "discord.gifts", "discord.dev",
             "discord.design", "discord.store", "discord.tools", "discordapp.com",
             "discordapp.net", "discordcdn.com", "discordstatus.com", "discordsays.com",
             "discordsez.com", "discordactivities.com", "discord-activities.com", "dis.gd",
             "gateway.discord.gg", "status.discord.com", "updates.discord.com", "dl.discordapp.net",
+            "cdn.discordapp.com", "media.discordapp.net", "attachments.discord.net",
         ].into_iter().map(String::from));
-    } else if lower.contains("roblox") || lower == "rbx" {
-        list.extend(vec![
+    } else if lower.contains("roblox") || slug == "roblox" || slug == "rbx" {
+        set.extend(vec![
             "roblox.com", "www.roblox.com", "web.roblox.com", "m.roblox.com",
-            "api.roblox.com", "apis.roblox.com", "auth.roblox.com",
-            "games.roblox.com", "gamejoin.roblox.com", "matchmaking.roblox.com",
-            "assetdelivery.roblox.com", "clientsettings.roblox.com",
-            "clientsettingscdn.roblox.com", "clientsettings.api.roblox.com",
-            "versioncompatibility.api.roblox.com", "setup.roblox.com",
-            "avatar.roblox.com", "chat.roblox.com", "friends.roblox.com",
-            "presence.roblox.com", "economy.roblox.com", "realtime.roblox.com",
-            "realtime-signalr.roblox.com", "thumbnails.roblox.com",
-            "locale.roblox.com", "metrics.roblox.com", "ncs.roblox.com",
-            "client-telemetry.roblox.com", "ecsv2.roblox.com", "abtesting.roblox.com",
-            "ephemeralcounters.api.roblox.com", "accountinformation.roblox.com",
-            "accountsettings.roblox.com", "badges.roblox.com", "contacts.roblox.com",
-            "economycreatorstats.roblox.com", "engagementpayouts.roblox.com",
-            "followings.roblox.com", "gameinternationalization.roblox.com",
-            "groups.roblox.com", "inventory.roblox.com", "itemconfiguration.roblox.com",
-            "localizationtables.roblox.com", "midas.roblox.com", "notifications.roblox.com",
-            "premiumfeatures.roblox.com", "privatemessages.roblox.com", "publish.roblox.com",
-            "scs.roblox.com", "share.roblox.com", "textfilter.roblox.com", "trades.roblox.com",
-            "translationroles.roblox.com", "translations.roblox.com",
-            "twostepverification.roblox.com", "usersearch.roblox.com", "users.roblox.com",
-            "voice.roblox.com", "devforum.roblox.com", "create.roblox.com",
-            "developer.roblox.com", "corp.roblox.com", "help.roblox.com",
-            "en.help.roblox.com", "titanium.roblox.com", "edge-term4.roblox.com",
-            "nspx1.roblox.com", "nspx2.roblox.com", "nspx3.roblox.com", "nspx4.roblox.com",
-            "setup.rbxcdn.com", "roblox-setup.rbxcdn.com", "rbxcdn.com", "rbxcdn.net",
-            "c0.rbxcdn.com", "c1.rbxcdn.com", "c2.rbxcdn.com", "c3.rbxcdn.com",
-            "c4.rbxcdn.com", "c5.rbxcdn.com", "c6.rbxcdn.com", "c7.rbxcdn.com",
-            "t0.rbxcdn.com", "t1.rbxcdn.com", "t2.rbxcdn.com", "t3.rbxcdn.com",
-            "t4.rbxcdn.com", "t5.rbxcdn.com", "t6.rbxcdn.com", "t7.rbxcdn.com",
-            "tr.rbxcdn.com", "images.rbxcdn.com", "static.rbxcdn.com", "js.rbxcdn.com",
-            "css.rbxcdn.com", "robloxcdn.com", "rbxinfra.net", "rbx.com",
-            "rblx.co", "rblx.org", "rblx.game", "rblx.social", "rblx.wtf",
-            "blox.com", "robloxlabs.com", "robloxdev.com", "robloxassets.com",
-            "robloxlibrary.com", "robloxlocalization.com", "robloxqa.com",
-            "robloxstudios.com", "roblox.net", "roblox.us", "roblox.gg", "roblox.org",
-            "roblox.co.uk", "roblox.cn", "roblox.qq.com", "robloxapp.vnggames.com",
-            "simulprod.com", "simulpong.com", "rover.na.roblox.net", "rover.link",
-            "arkoselabs.com", "roblox-api.arkoselabs.com", "cdn.arkoselabs.com",
-            "client-api.arkoselabs.com", "funcaptcha.com", "kaptcha.com",
-            "withpersona.com", "persona.com", "hcaptcha.com", "rbxtrk.com",
-            "rbxlabs.com", "guilded.gg", "recaptcha.net", "challenges.cloudflare.com",
-            "awswaf.com", "datadome.co", "px-cloud.net", "captcha-delivery.com",
-            "s3.amazonaws.com", "s3.us-east-2.amazonaws.com",
+            "api.roblox.com", "apis.roblox.com", "auth.roblox.com", "games.roblox.com", "gamejoin.roblox.com",
+            "clientsettings.roblox.com", "clientsettingscdn.roblox.com", "setup.roblox.com",
+            "setup.rbxcdn.com", "rbxcdn.com", "rbxcdn.net", "robloxcdn.com", "rbx.com",
+            "roblox.net", "roblox.gg", "guilded.gg",
         ].into_iter().map(String::from));
-    } else if lower.contains("wattpad") {
-        list.extend(vec!["wattpad.com", "wp-assets.emu.net"].into_iter().map(String::from));
-    } else if lower.contains("pastebin") {
-        list.extend(vec!["pastebin.com"].into_iter().map(String::from));
-    } else if lower.contains("medium") {
-        list.extend(vec!["medium.com"].into_iter().map(String::from));
-    } else if lower.contains("imgur") {
-        list.extend(vec!["imgur.com", "i.imgur.com"].into_iter().map(String::from));
-    } else if lower.contains("linktr") {
-        list.extend(vec!["linktr.ee"].into_iter().map(String::from));
-    } else if lower.contains("archiveofourown") || lower.contains("ao3") {
-        list.extend(vec!["archiveofourown.org"].into_iter().map(String::from));
-    } else if lower.contains("tumblr") {
-        list.extend(vec!["tumblr.com"].into_iter().map(String::from));
-    } else if lower.contains("wordpress") || lower.contains("wp") {
-        list.extend(vec!["wordpress.com", "wp.com"].into_iter().map(String::from));
-    } else if lower.contains("blogspot") || lower.contains("blogger") {
-        list.extend(vec!["blogspot.com", "blogger.com"].into_iter().map(String::from));
-    } else if lower.contains("quora") {
-        list.extend(vec!["quora.com"].into_iter().map(String::from));
-    } else if lower.contains("deviantart") {
-        list.extend(vec!["deviantart.com", "deviantart.net"].into_iter().map(String::from));
-    } else if lower.contains("flickr") {
-        list.extend(vec!["flickr.com", "staticflickr.com"].into_iter().map(String::from));
-    } else if lower.contains("pinterest") {
-        list.extend(vec!["pinterest.com", "pinimg.com"].into_iter().map(String::from));
-    } else if lower.contains("soundcloud") {
-        list.extend(vec!["soundcloud.com", "sndcdn.com"].into_iter().map(String::from));
-    } else if lower.contains("spotify") {
-        list.extend(vec!["spotify.com", "scdn.co", "spotifycdn.com", "spoti.fi"].into_iter().map(String::from));
-    } else if lower.contains("youtube") || lower.contains("youtu.be") {
-        list.extend(vec!["youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "ggpht.com"].into_iter().map(String::from));
-    } else if lower.contains("twitch") {
-        list.extend(vec!["twitch.tv", "ttvnw.net", "jtvnw.net", "twitchcdn.net"].into_iter().map(String::from));
-    } else if lower.contains("kick") {
-        list.extend(vec!["kick.com", "kickcdn.com"].into_iter().map(String::from));
-    } else if lower.contains("vimeo") {
-        list.extend(vec!["vimeo.com", "vimeocdn.com"].into_iter().map(String::from));
-    } else if lower.contains("dailymotion") {
-        list.extend(vec!["dailymotion.com", "dmcdn.net"].into_iter().map(String::from));
-    } else if lower.contains("twitter") || lower == "x" || lower.contains("x.com") {
-        list.extend(vec!["x.com", "twitter.com", "twimg.com", "t.co"].into_iter().map(String::from));
-    } else if lower.contains("instagram") || lower.contains("facebook") || lower.contains("meta") {
-        list.extend(vec!["instagram.com", "cdninstagram.com", "facebook.com", "fbcdn.net", "fbsbx.com"].into_iter().map(String::from));
-    } else if lower.contains("whatsapp") {
-        list.extend(vec!["whatsapp.com", "whatsapp.net"].into_iter().map(String::from));
-    } else if lower.contains("tiktok") {
-        list.extend(vec!["tiktok.com", "tiktokcdn.com", "tiktokv.com", "musical.ly"].into_iter().map(String::from));
-    } else if lower.contains("reddit") {
-        list.extend(vec!["reddit.com", "redd.it", "redditstatic.com", "redditmedia.com"].into_iter().map(String::from));
-    } else if lower.contains("telegram") {
-        list.extend(vec!["telegram.org", "telegram.me", "t.me"].into_iter().map(String::from));
-    } else if lower.contains("signal") {
-        list.extend(vec!["signal.org"].into_iter().map(String::from));
-    } else if lower.contains("wiki") {
-        list.extend(vec!["wikipedia.org", "wikimedia.org"].into_iter().map(String::from));
-    } else if lower.contains("archive.org") {
-        list.extend(vec!["archive.org"].into_iter().map(String::from));
-    } else if lower.contains("github") {
-        list.extend(vec!["github.com", "githubusercontent.com", "githubassets.com"].into_iter().map(String::from));
-    } else if lower.contains("gitlab") {
-        list.extend(vec!["gitlab.com"].into_iter().map(String::from));
-    } else if lower.contains("stackoverflow") || lower.contains("stackexchange") {
-        list.extend(vec!["stackoverflow.com", "stackexchange.com", "sstatic.net"].into_iter().map(String::from));
-    } else if lower.contains("duckduckgo") {
-        list.extend(vec!["duckduckgo.com"].into_iter().map(String::from));
-    } else if lower.contains("proton") {
-        list.extend(vec!["proton.me", "protonmail.com"].into_iter().map(String::from));
-    } else if lower.contains("tutanota") {
-        list.extend(vec!["tutanota.com"].into_iter().map(String::from));
-    } else if lower.contains("torproject") || lower.contains("tor") {
-        list.extend(vec!["torproject.org"].into_iter().map(String::from));
-    } else if lower.contains("steam") {
-        list.extend(vec!["steampowered.com", "steamcommunity.com", "steamstatic.com", "steamcontent.com", "steamserver.net", "steam-chat.com"].into_iter().map(String::from));
+    } else if lower.contains("youtube") || slug == "youtube" {
+        set.extend(vec![
+            "youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "ggpht.com",
+            "youtube-nocookie.com", "youtubei.googleapis.com",
+        ].into_iter().map(String::from));
+    } else if lower.contains("kick") || slug == "kick" {
+        set.extend(vec!["kick.com", "kickcdn.com", "stream.kick.com", "chat.kick.com"].into_iter().map(String::from));
+    } else if lower.contains("twitch") || slug == "twitch" {
+        set.extend(vec!["twitch.tv", "ttvnw.net", "jtvnw.net", "twitchcdn.net"].into_iter().map(String::from));
+    } else if lower.contains("spotify") || slug == "spotify" {
+        set.extend(vec!["spotify.com", "scdn.co", "spotifycdn.com", "spoti.fi", "spclient.wg.spotify.com"].into_iter().map(String::from));
+    } else if lower.contains("steam") || slug == "steam" {
+        set.extend(vec!["steampowered.com", "steamcommunity.com", "steamstatic.com", "steamcontent.com", "steamserver.net"].into_iter().map(String::from));
     } else if lower.contains("epic") || lower.contains("fortnite") {
-        list.extend(vec!["epicgames.com", "unrealengine.com", "fortnite.com", "ol.epicgames.com"].into_iter().map(String::from));
-    } else if lower.contains("minecraft") || lower.contains("mojang") {
-        list.extend(vec!["minecraft.net", "mojang.com", "minecraftservices.com", "launcher.mojang.com"].into_iter().map(String::from));
-    } else if lower.contains("riot") || lower.contains("valorant") || lower.contains("leagueoflegends") {
-        list.extend(vec!["riotgames.com", "leagueoflegends.com", "playvalorant.com", "riotcdn.net", "pvp.net"].into_iter().map(String::from));
-    } else if lower.contains("rockstar") || lower.contains("gta") {
-        list.extend(vec!["rockstargames.com", "socialclub.rockstargames.com"].into_iter().map(String::from));
-    } else if lower.contains("blizzard") || lower.contains("battle.net") {
-        list.extend(vec!["blizzard.com", "battle.net", "bnetcmsus-a.akamaihd.net"].into_iter().map(String::from));
-    } else if lower.contains("ea") || lower.contains("origin") {
-        list.extend(vec!["ea.com", "origin.com"].into_iter().map(String::from));
-    } else if lower.contains("ubisoft") || lower.contains("uplay") {
-        list.extend(vec!["ubisoft.com", "uplay.com"].into_iter().map(String::from));
+        set.extend(vec!["epicgames.com", "unrealengine.com", "fortnite.com", "ol.epicgames.com", "epicgames.dev"].into_iter().map(String::from));
+    } else if lower.contains("minecraft") || slug == "minecraft" {
+        set.extend(vec!["minecraft.net", "mojang.com", "minecraftservices.com", "launcher.mojang.com"].into_iter().map(String::from));
+    } else if lower.contains("riot") || lower.contains("valorant") {
+        set.extend(vec!["riotgames.com", "leagueoflegends.com", "playvalorant.com", "riotcdn.net", "pvp.net"].into_iter().map(String::from));
+    } else if lower.contains("telegram") || slug == "telegram" {
+        set.extend(vec!["telegram.org", "telegram.me", "t.me", "telesco.pe"].into_iter().map(String::from));
+    } else if lower.contains("tiktok") || slug == "tiktok" {
+        set.extend(vec!["tiktok.com", "tiktokcdn.com", "tiktokv.com", "musical.ly"].into_iter().map(String::from));
+    } else if lower.contains("reddit") || slug == "reddit" {
+        set.extend(vec!["reddit.com", "redd.it", "redditstatic.com", "redditmedia.com"].into_iter().map(String::from));
+    } else if lower.contains("github") || slug == "github" {
+        set.extend(vec!["github.com", "githubusercontent.com", "githubassets.com"].into_iter().map(String::from));
     }
 
-    // Also extract base domain and generate full family
-    if let Some(base) = normalize(raw) {
-        list.extend(vec![
-            base.clone(),
-            format!("www.{base}"),
-            format!("api.{base}"),
-            format!("cdn.{base}"),
-            format!("auth.{base}"),
-            format!("static.{base}"),
-            format!("assets.{base}"),
-            format!("media.{base}"),
-            format!("login.{base}"),
-            format!("app.{base}"),
-            format!("download.{base}"),
-            format!("updates.{base}"),
-            format!("status.{base}"),
-            format!("launcher.{base}"),
-            format!("game.{base}"),
-            format!("play.{base}"),
-        ]);
+    // 3) Intelligent Generative Subdomains & Service Endpoints for the base domain
+    let subdomains = [
+        "", "www", "app", "web", "m",
+        "api", "api-v1", "api-v2", "apis", "gateway", "backend", "graphql", "router",
+        "ws", "wss", "socket", "realtime", "stream", "live", "chat", "voice",
+        "auth", "login", "account", "accounts", "id", "sso", "oauth",
+        "cdn", "cdn1", "cdn2", "static", "assets", "media", "images", "img", "content",
+        "download", "downloads", "dl", "update", "updates", "patch", "launcher", "client",
+        "game", "games", "play", "server", "servers", "status", "version"
+    ];
+
+    for sub in subdomains {
+        let domain = if sub.is_empty() {
+            base_domain.clone()
+        } else {
+            format!("{}.{}", sub, base_domain)
+        };
+        set.insert(domain);
     }
 
-    list.sort();
-    list.dedup();
-    list
+    // 4) Dedicated Brand CDN & Infrastructure Permutations
+    let brand_cdns = [
+        format!("{}cdn.com", slug),
+        format!("{}-cdn.com", slug),
+        format!("{}static.com", slug),
+        format!("{}assets.com", slug),
+        format!("{}media.com", slug),
+        format!("{}app.com", slug),
+        format!("{}app.net", slug),
+        format!("{}api.com", slug),
+        format!("{}services.com", slug),
+    ];
+    for b in brand_cdns {
+        set.insert(b);
+    }
+
+    // 5) Multi-TLD Predictive Variations (.net, .gg, .io, .tv, .app, .co)
+    let alt_tlds = ["com", "net", "gg", "io", "tv", "app", "co"];
+    for tld in alt_tlds {
+        let alt_base = format!("{}.{}", slug, tld);
+        if alt_base != base_domain {
+            set.insert(alt_base.clone());
+            set.insert(format!("api.{}", alt_base));
+            set.insert(format!("cdn.{}", alt_base));
+            set.insert(format!("auth.{}", alt_base));
+            set.insert(format!("ws.{}", alt_base));
+        }
+    }
+
+    // Filter to ensure only strictly valid domain strings remain
+    let mut result: Vec<String> = set
+        .into_iter()
+        .filter(|d| {
+            d.contains('.')
+                && !d.starts_with('.')
+                && !d.ends_with('.')
+                && !d.starts_with('-')
+                && !d.ends_with('-')
+                && !d.contains("..")
+                && d.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+        })
+        .collect();
+
+    result.sort();
+    result
 }
 
 fn enabled<'a>(cfg: &'a Config) -> impl Iterator<Item = &'static AppProfile> + 'a {
@@ -743,3 +757,49 @@ pub fn get_domain_suggestions(raw: &str) -> DomainSuggestionResult {
         ),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_expand_domains_plain_name() {
+        let domains = expand_domains("kick");
+        assert!(domains.contains(&"kick.com".to_string()));
+        assert!(domains.contains(&"api.kick.com".to_string()));
+        assert!(domains.contains(&"cdn.kick.com".to_string()));
+        assert!(domains.contains(&"auth.kick.com".to_string()));
+        assert!(domains.contains(&"kickcdn.com".to_string()));
+        assert!(domains.len() >= 20);
+    }
+
+    #[test]
+    fn test_expand_domains_exe_file() {
+        let domains = expand_domains("SuperRacer.exe");
+        assert!(domains.contains(&"superracer.com".to_string()));
+        assert!(domains.contains(&"api.superracer.com".to_string()));
+        assert!(domains.contains(&"cdn.superracer.com".to_string()));
+        assert!(domains.contains(&"game.superracer.com".to_string()));
+        assert!(domains.contains(&"superracercdn.com".to_string()));
+        assert!(domains.len() >= 20);
+    }
+
+    #[test]
+    fn test_expand_domains_custom_url() {
+        let domains = expand_domains("https://play.mycustomgame.io/match/123");
+        assert!(domains.contains(&"mycustomgame.io".to_string()));
+        assert!(domains.contains(&"api.mycustomgame.io".to_string()));
+        assert!(domains.contains(&"game.mycustomgame.io".to_string()));
+        assert!(domains.contains(&"mycustomgame.com".to_string()));
+        assert!(domains.len() >= 20);
+    }
+
+    #[test]
+    fn test_expand_domains_known_game() {
+        let domains = expand_domains("valorant.exe");
+        assert!(domains.contains(&"riotgames.com".to_string()));
+        assert!(domains.contains(&"pvp.net".to_string()));
+        assert!(domains.contains(&"playvalorant.com".to_string()));
+    }
+}
+

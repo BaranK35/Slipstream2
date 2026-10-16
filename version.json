@@ -1,5 +1,5 @@
 {
-  "version": "0.1.7",
-  "notes": "v0.1.7 Güncellemesi:\n- Yeni Platform / Oyun Ekle penceresi sola doğru dışa taşan ferah 820px dikdörtgen tasarıma kavuşturuldu.\n- 2 sütunlu modern uygulama ızgarası ve rahat arama/seçim düzeni.\n- Windows beyaz kaydırma çubukları yerine özel karanlık siber kaydırma çubukları eklendi.",
-  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.1.7/Slipstream_0.1.7_x64-setup.exe"
+  "version": "0.1.8",
+  "notes": "v0.1.8 Güncellemesi:\n- Akıllı ve üretken alan adı tahmin motoru eklendi.",
+  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.1.8/Slipstream_0.1.8_x64-setup.exe"
 }
