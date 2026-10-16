@@ -7,7 +7,7 @@
   --border-active: rgba(99, 102, 241, 0.55);
   --text-main: #f8fafc;
   --text-muted: #94a3b8;
-  --text-dim: #64748b;
+  --text-dim: #94a3b8;
   --cyan: #10b981;
   --cyan-glow: rgba(16, 185, 129, 0.4);
   --blue: #06b6d4;
@@ -1029,11 +1029,12 @@ html, body {
 
 .field-hint {
   font-size: 11px;
-  color: var(--text-dim);
+  color: #9cb1ce;
+  line-height: 1.4;
 }
 
 .field-hint b {
-  color: var(--text-muted);
+  color: #f1f5f9;
 }
 
 .select-input, .text-input {
@@ -1700,11 +1701,11 @@ html, body {
 .quick-actions-bar {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
   overflow-x: auto;
   padding-bottom: 2px;
   flex-shrink: 0;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .quick-actions-bar::-webkit-scrollbar {
@@ -1712,36 +1713,39 @@ html, body {
 }
 
 .quick-chip {
-  padding: 3px 8px;
-  font-size: 10.5px;
+  padding: 4px 12px;
+  font-size: 11px;
   font-weight: 500;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-full);
-  color: var(--text-muted);
+  color: #cbd5e1;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s ease;
+  transition: all 0.18s ease;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
 }
 
 .quick-chip:hover {
-  background: rgba(99, 102, 241, 0.15);
-  border-color: rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.5);
   color: #fff;
   transform: translateY(-1px);
 }
 
 .quick-chip.secondary {
-  color: var(--text-dim);
+  color: #9cb1ce;
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .quick-chip.secondary:hover {
-  color: var(--text-main);
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.15);
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.35);
+  transform: translateY(-1px);
 }
 
 /* Bulk actions row (legacy fallback) */
@@ -1853,20 +1857,27 @@ html, body {
 .pref-meta {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 
 .pref-name {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--text-main);
-  letter-spacing: 0.1px;
+  letter-spacing: 0.15px;
 }
 
 .pref-desc {
-  font-size: 10.5px;
-  color: var(--text-dim);
-  line-height: 1.35;
+  font-size: 11px;
+  color: #9cb1ce;
+  line-height: 1.45;
+  letter-spacing: 0.1px;
+}
+
+.pref-desc strong,
+.pref-desc b {
+  color: #f1f5f9;
+  font-weight: 600;
 }
 
 .pref-divider {

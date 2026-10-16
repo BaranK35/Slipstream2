@@ -159,11 +159,33 @@ pub fn get_preset_domains_for_app(name: &str, exe_name: &str) -> Vec<String> {
     }
 }
 
+pub fn is_likely_launcher(name: &str, exe_name: &str) -> bool {
+    let lower_name = name.to_lowercase();
+    let lower_exe = exe_name.to_lowercase();
+    let launcher_exes = [
+        "steam.exe", "steamwebhelper.exe", "epicgameslauncher.exe", "epicwebhelper.exe",
+        "riotclientservices.exe", "riotclientux.exe", "battle.net.exe", "eadesktop.exe",
+        "origin.exe", "ubisoftconnect.exe", "upc.exe", "gog galaxy.exe", "galaxyclient.exe"
+    ];
+    if launcher_exes.iter().any(|&l| lower_exe == l || lower_exe.ends_with(l)) {
+        return true;
+    }
+    let launcher_names = [
+        "steam", "epic games", "epic games launcher", "riot client", "riot games",
+        "battle.net", "ea app", "origin", "ubisoft connect", "gog galaxy"
+    ];
+    launcher_names.iter().any(|&ln| lower_name == ln || lower_name.starts_with(ln))
+}
+
 pub fn is_likely_game(name: &str, exe_name: &str, install_location: &str) -> bool {
+    if is_likely_launcher(name, exe_name) {
+        return false;
+    }
+
     let lower = format!("{} {} {}", name, exe_name, install_location).to_lowercase();
     let game_keywords = [
-        "game", "steam", "valve", "riot", "valorant", "league", "counter-strike", "cs2", "csgo",
-        "epic", "unreal", "blizzard", "battle.net", "ea games", "electronic arts", "ubisoft",
+        "game", "valve", "valorant", "league", "counter-strike", "cs2", "csgo",
+        "unreal", "blizzard", "ea games", "electronic arts", "ubisoft",
         "rockstar", "gta", "grand theft auto", "cyberpunk", "witcher", "roblox", "minecraft",
         "simulator", "truck", "assetto", "corsa", "fifa", "nba", "pes", "konami", "genshin",
         "honkai", "star rail", "apex", "overwatch", "pubg", "fortnite", "dota", "destiny",
@@ -639,6 +661,10 @@ mod tests {
         assert!(is_likely_game("Counter-Strike 2", "cs2.exe", ""));
         assert!(is_likely_game("Euro Truck Simulator 2", "eurotrucks2.exe", ""));
         assert!(!is_likely_game("Spotify", "Spotify.exe", ""));
+        // Launchers must be categorized as apps, not games:
+        assert!(!is_likely_game("Steam", "steam.exe", ""));
+        assert!(!is_likely_game("Epic Games Launcher", "EpicGamesLauncher.exe", ""));
+        assert!(!is_likely_game("Riot Client", "RiotClientServices.exe", ""));
     }
 
     #[test]

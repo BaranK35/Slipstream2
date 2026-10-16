@@ -729,39 +729,9 @@ export default function App() {
     }
   };
 
-  const selectPopular = () => {
-    if (soundEnabled) playTone("click");
-    patch({ enabled_apps: ["discord", "roblox"] });
-    setSuccessMsg(t.suc_popularSelected);
-  };
-
-  const applyPreset = (preset: "gamer" | "social" | "media" | "all") => {
-    if (soundEnabled) playTone("click");
-    if (!cfg || !cat) return;
-    let selected: string[] = [];
-    if (preset === "gamer") {
-      selected = ["roblox", "steam", "epicgames", "riotgames", "minecraft", "rockstar_blizzard_ea", "discord"];
-      patch({ enabled_apps: selected, gaming_mode: true });
-      setSuccessMsg(t.suc_gamerPack);
-    } else if (preset === "social") {
-      selected = ["discord", "x", "meta", "telegram", "reddit", "tiktok"];
-      patch({ enabled_apps: selected });
-      setSuccessMsg(t.suc_socialPack);
-    } else if (preset === "media") {
-      selected = ["youtube", "twitch", "kick", "spotify"];
-      patch({ enabled_apps: selected });
-      setSuccessMsg(t.suc_mediaPack);
-    } else if (preset === "all") {
-      const allIds = [
-        ...cat.apps.map((a) => a.id),
-        ...cfg.custom_platforms.map((cp) => cp.id),
-      ];
-      patch({ enabled_apps: Array.from(new Set(allIds)) });
-      setSuccessMsg(t.suc_allSelected);
-    }
-  };
 
   async function handleToggleAutostart() {
+    if (soundEnabled) playTone("toggle");
     if (!cfg) return;
     const newVal = !cfg.auto_start_pc;
     try {
@@ -936,7 +906,9 @@ export default function App() {
       const exeName = normalized.split("/").pop() || "app.exe";
       const baseName = exeName.replace(/\.exe$/i, "");
 
-      const isGame = /game|play|steam|riot|valve|epic|craft|sim|strike|auto|combat|racing/i.test(pickedPath);
+      // Classify store launchers (Steam, Epic, Riot, etc.) as 'app' rather than 'game'
+      const isLauncher = /steam|epic|riot|battle\.net|ea|origin|ubisoft|galaxy/i.test(exeName) && /launcher|client|services|helper|steam\.exe/i.test(exeName);
+      const isGame = !isLauncher && /game|play|valve|craft|sim|strike|auto|combat|racing/i.test(pickedPath);
       const category: "app" | "game" = isGame ? "game" : "app";
       const icon = isGame ? "🎮" : "📱";
       const id = "custom_" + exeName.toLowerCase().replace(/[^a-z0-9]/g, "_");
@@ -1293,7 +1265,7 @@ export default function App() {
                   className={`power-button ${busy ? "busy" : on ? "on" : "off"}`}
                   onClick={handlePower}
                   disabled={busy}
-                  aria-label={on ? t.powerOnLabel : t.powerOffLabel}
+                  aria-label={on ? t.powerOnAria : t.powerOffAria}
                 >
                   <svg viewBox="0 0 100 100" className="power-svg">
                     <circle cx="50" cy="50" r="42" className="power-ring" />
@@ -1366,56 +1338,37 @@ export default function App() {
             <div className="category-pills">
               <button
                 className={`pill-btn ${platformFilter === "all" ? "active" : ""}`}
-                onClick={() => setPlatformFilter("all")}
+                onClick={() => {
+                  if (soundEnabled) playTone("click");
+                  setPlatformFilter("all");
+                }}
               >
                 {t.allFilter(allPlatforms.length)}
               </button>
               <button
                 className={`pill-btn ${platformFilter === "apps" ? "active" : ""}`}
-                onClick={() => setPlatformFilter("apps")}
+                onClick={() => {
+                  if (soundEnabled) playTone("click");
+                  setPlatformFilter("apps");
+                }}
               >
                 {t.appsFilter(appCount)}
               </button>
               <button
                 className={`pill-btn ${platformFilter === "games" ? "active" : ""}`}
-                onClick={() => setPlatformFilter("games")}
+                onClick={() => {
+                  if (soundEnabled) playTone("click");
+                  setPlatformFilter("games");
+                }}
               >
                 {t.gamesFilter(gameCount)}
               </button>
             </div>
 
-            {/* Quick Actions & Ready Preset Chips */}
+            {/* Quick Actions: Select All & Disable All */}
             <div className="quick-actions-bar">
               <button
                 className="quick-chip"
-                onClick={selectPopular}
-                title={t.presetPopularTitle}
-              >
-                {t.presetPopular}
-              </button>
-              <button
-                className="quick-chip"
-                onClick={() => applyPreset("gamer")}
-                title={t.presetGamerTitle}
-              >
-                {t.presetGamer}
-              </button>
-              <button
-                className="quick-chip"
-                onClick={() => applyPreset("social")}
-                title={t.presetSocialTitle}
-              >
-                {t.presetSocial}
-              </button>
-              <button
-                className="quick-chip"
-                onClick={() => applyPreset("media")}
-                title={t.presetMediaTitle}
-              >
-                {t.presetMedia}
-              </button>
-              <button
-                className="quick-chip secondary"
                 onClick={() => toggleSelectAll(true)}
                 title={t.selectAllTitle}
               >
@@ -1479,7 +1432,7 @@ export default function App() {
                         {a.isCustom && (
                           <button
                             className="delete-custom-btn"
-                            title={t.deletePlatformBtn}
+                            title={t.deletePlatformTitle}
                             onClick={(e) => {
                               e.stopPropagation();
                               removeCustomPlatform(a.id);
@@ -1551,14 +1504,20 @@ export default function App() {
             <div className="autotune-box">
               <button
                 className="primary-btn autotune-btn"
-                onClick={handleAutoTune}
+                onClick={() => {
+                  if (soundEnabled) playTone("click");
+                  handleAutoTune();
+                }}
                 disabled={busy}
               >
                 {busy ? t.autoTuneBusy : t.autoTuneBtn}
               </button>
               <button
                 className="text-btn"
-                onClick={() => setShowLog(!showLog)}
+                onClick={() => {
+                  if (soundEnabled) playTone("click");
+                  setShowLog(!showLog);
+                }}
               >
                 {showLog ? t.hideLogBtn : t.showLogBtn}
               </button>
@@ -1591,7 +1550,10 @@ export default function App() {
                 </div>
                 <div
                   className={`switch ${cfg.manage_dns ? "checked" : ""}`}
-                  onClick={() => patch({ manage_dns: !cfg.manage_dns })}
+                  onClick={() => {
+                    if (soundEnabled) playTone("toggle");
+                    patch({ manage_dns: !cfg.manage_dns });
+                  }}
                 >
                   <div className="switch-thumb" />
                 </div>
@@ -1605,7 +1567,10 @@ export default function App() {
                   <button
                     className="tool-btn"
                     style={{ flex: "none", padding: "3px 8px", fontSize: 10 }}
-                    onClick={handleBenchDoh}
+                    onClick={() => {
+                      if (soundEnabled) playTone("click");
+                      handleBenchDoh();
+                    }}
                     disabled={benchmarkingDoh}
                   >
                     {benchmarkingDoh ? t.benchDnsBusy : t.benchDnsBtn}
@@ -1614,7 +1579,10 @@ export default function App() {
                 <select
                   className="select-input"
                   value={cfg.doh_provider}
-                  onChange={(e) => patch({ doh_provider: e.target.value })}
+                  onChange={(e) => {
+                    if (soundEnabled) playTone("click");
+                    patch({ doh_provider: e.target.value });
+                  }}
                 >
                   <option value="cloudflare">Cloudflare (1.1.1.1)</option>
                   <option value="google">Google DNS (dns.google)</option>
@@ -1632,7 +1600,10 @@ export default function App() {
                       <div
                         key={b.provider}
                         className={`doh-bench-card ${isSelected ? "selected" : ""}`}
-                        onClick={() => patch({ doh_provider: b.provider })}
+                        onClick={() => {
+                          if (soundEnabled) playTone("click");
+                          patch({ doh_provider: b.provider });
+                        }}
                       >
                         <div className="doh-card-header">
                           <span className="doh-card-title">{b.provider.toUpperCase()}</span>
@@ -1656,13 +1627,13 @@ export default function App() {
               )}
 
               <div className="tool-buttons-row">
-                <button className="tool-btn" onClick={handleFlushDns} title={t.flushDnsTitle}>
+                <button className="tool-btn" onClick={() => { if (soundEnabled) playTone("click"); handleFlushDns(); }} title={t.flushDnsTitle}>
                   {t.flushDnsBtn}
                 </button>
-                <button className="tool-btn" onClick={handleResetAdapterDns} title={t.resetAdaptersTitle}>
+                <button className="tool-btn" onClick={() => { if (soundEnabled) playTone("click"); handleResetAdapterDns(); }} title={t.resetAdaptersTitle}>
                   {t.resetAdaptersBtn}
                 </button>
-                <button className="tool-btn" onClick={handleRunHealthCheck} title={t.networkDiagTitle}>
+                <button className="tool-btn" onClick={() => { if (soundEnabled) playTone("click"); handleRunHealthCheck(); }} title={t.networkDiagTitle}>
                   {t.networkDiagBtn}
                 </button>
               </div>
@@ -1726,21 +1697,30 @@ export default function App() {
               <button
                 type="button"
                 className={`subtab-btn ${prefSubTab === "genel" ? "active" : ""}`}
-                onClick={() => setPrefSubTab("genel")}
+                onClick={() => {
+                  if (soundEnabled) playTone("click");
+                  setPrefSubTab("genel");
+                }}
               >
                 {t.generalSubTab}
               </button>
               <button
                 type="button"
                 className={`subtab-btn ${prefSubTab === "gelismis" ? "active" : ""}`}
-                onClick={() => setPrefSubTab("gelismis")}
+                onClick={() => {
+                  if (soundEnabled) playTone("click");
+                  setPrefSubTab("gelismis");
+                }}
               >
                 {t.advancedSubTab}
               </button>
               <button
                 type="button"
                 className={`subtab-btn ${prefSubTab === "kisisellestir" ? "active" : ""}`}
-                onClick={() => setPrefSubTab("kisisellestir")}
+                onClick={() => {
+                  if (soundEnabled) playTone("click");
+                  setPrefSubTab("kisisellestir");
+                }}
               >
                 {t.personalizeSubTab}
               </button>
@@ -1774,7 +1754,10 @@ export default function App() {
                     </div>
                     <div
                       className={`switch ${cfg.auto_connect ? "checked" : ""}`}
-                      onClick={() => patch({ auto_connect: !cfg.auto_connect })}
+                      onClick={() => {
+                        if (soundEnabled) playTone("toggle");
+                        patch({ auto_connect: !cfg.auto_connect });
+                      }}
                     >
                       <div className="switch-thumb" />
                     </div>
@@ -1789,7 +1772,10 @@ export default function App() {
                     </div>
                     <div
                       className={`switch ${cfg.start_minimized ? "checked" : ""}`}
-                      onClick={() => patch({ start_minimized: !cfg.start_minimized })}
+                      onClick={() => {
+                        if (soundEnabled) playTone("toggle");
+                        patch({ start_minimized: !cfg.start_minimized });
+                      }}
                     >
                       <div className="switch-thumb" />
                     </div>
@@ -1805,6 +1791,7 @@ export default function App() {
                     <div
                       className={`switch ${cfg.hide_on_blur ? "checked" : ""}`}
                       onClick={() => {
+                        if (soundEnabled) playTone("toggle");
                         const nextVal = !cfg.hide_on_blur;
                         patch({ hide_on_blur: nextVal });
                         invoke("set_hide_on_blur", { enabled: nextVal }).catch(() => {});
@@ -1830,7 +1817,10 @@ export default function App() {
                     </div>
                     <div
                       className={`switch ${cfg.process_detection_mode ? "checked" : ""}`}
-                      onClick={() => patch({ process_detection_mode: !cfg.process_detection_mode })}
+                      onClick={() => {
+                        if (soundEnabled) playTone("toggle");
+                        patch({ process_detection_mode: !cfg.process_detection_mode });
+                      }}
                     >
                       <div className="switch-thumb" />
                     </div>
@@ -1868,7 +1858,10 @@ export default function App() {
                     </div>
                     <div
                       className={`switch ${cfg.auto_update ? "checked" : ""}`}
-                      onClick={() => patch({ auto_update: !cfg.auto_update })}
+                      onClick={() => {
+                        if (soundEnabled) playTone("toggle");
+                        patch({ auto_update: !cfg.auto_update });
+                      }}
                     >
                       <div className="switch-thumb" />
                     </div>
@@ -1896,7 +1889,10 @@ export default function App() {
                       <button
                         className="secondary-btn"
                         style={{ padding: "6px 10px", fontSize: 11 }}
-                        onClick={() => invoke("open_url", { url: "https://github.com/BaranK35/Slipstream2/releases" })}
+                        onClick={() => {
+                          if (soundEnabled) playTone("click");
+                          invoke("open_url", { url: "https://github.com/BaranK35/Slipstream2/releases" });
+                        }}
                         title={t.githubBtnTitle}
                       >
                         GitHub
@@ -1904,7 +1900,10 @@ export default function App() {
                       <button
                         className="secondary-btn"
                         style={{ padding: "6px 12px", fontSize: 11 }}
-                        onClick={() => handleCheckUpdates(true)}
+                        onClick={() => {
+                          if (soundEnabled) playTone("click");
+                          handleCheckUpdates(true);
+                        }}
                         disabled={checkingUpdates}
                       >
                         {checkingUpdates ? t.checkingUpdatesText : t.checkUpdatesBtn}
@@ -1924,7 +1923,10 @@ export default function App() {
                     <button
                       className="secondary-btn"
                       style={{ padding: "6px 12px", fontSize: 11 }}
-                      onClick={() => setShowEulaModal(true)}
+                      onClick={() => {
+                        if (soundEnabled) playTone("click");
+                        setShowEulaModal(true);
+                      }}
                     >
                       {t.readEulaBtn}
                     </button>
@@ -1951,7 +1953,10 @@ export default function App() {
                     </div>
                     <div
                       className={`switch ${cfg.gaming_mode ? "checked" : ""}`}
-                      onClick={() => patch({ gaming_mode: !cfg.gaming_mode })}
+                      onClick={() => {
+                        if (soundEnabled) playTone("toggle");
+                        patch({ gaming_mode: !cfg.gaming_mode });
+                      }}
                     >
                       <div className="switch-thumb" />
                     </div>
@@ -1966,16 +1971,17 @@ export default function App() {
                         <span className="pill-badge pill-cyan">{t.extraSettingBadge}</span>
                       </div>
                       <span className="pref-desc">
-                        {t.gamePriorityBoostDescPart1} {t.gamePriorityBoostDescPart2}
-                        <strong>{t.gamePriorityBoostDescStrong1}</strong>
-                        {t.gamePriorityBoostDescPart3} {t.gamePriorityBoostDescPart4}
-                        <strong>{t.gamePriorityBoostDescStrong2}</strong>
-                        {t.gamePriorityBoostDescPart5}
+                        {t.gamePriorityBoostDescPart1}
+                        {t.gamePriorityBoostDescStrong1 ? <strong>{t.gamePriorityBoostDescStrong1}</strong> : null}
+                        {t.gamePriorityBoostDescPart3}
                       </span>
                     </div>
                     <div
                       className={`switch ${cfg.game_priority_boost ? "checked" : ""}`}
-                      onClick={() => patch({ game_priority_boost: !cfg.game_priority_boost })}
+                      onClick={() => {
+                        if (soundEnabled) playTone("toggle");
+                        patch({ game_priority_boost: !cfg.game_priority_boost });
+                      }}
                     >
                       <div className="switch-thumb" />
                     </div>
@@ -1990,7 +1996,10 @@ export default function App() {
                     </div>
                     <div
                       className={`switch ${cfg.auto_healing ? "checked" : ""}`}
-                      onClick={() => patch({ auto_healing: !cfg.auto_healing })}
+                      onClick={() => {
+                        if (soundEnabled) playTone("toggle");
+                        patch({ auto_healing: !cfg.auto_healing });
+                      }}
                     >
                       <div className="switch-thumb" />
                     </div>
@@ -2024,7 +2033,10 @@ export default function App() {
                   <div className="tool-buttons-row" style={{ marginTop: 6 }}>
                     <button
                       className="tool-btn"
-                      onClick={handleRepairDiscord}
+                      onClick={() => {
+                        if (soundEnabled) playTone("click");
+                        handleRepairDiscord();
+                      }}
                       disabled={repairingDiscord}
                       title={t.discordRepairTitle}
                     >
@@ -2046,7 +2058,10 @@ export default function App() {
                     <select
                       className="select-input"
                       value={lang}
-                      onChange={(e) => setLang(e.target.value as LangCode)}
+                      onChange={(e) => {
+                        if (soundEnabled) playTone("click");
+                        setLang(e.target.value as LangCode);
+                      }}
                     >
                       {LANGUAGES.map((l) => (
                         <option key={l.code} value={l.code}>
@@ -2078,7 +2093,10 @@ export default function App() {
                               borderColor: isActive ? itemTheme.accent : `${itemTheme.accent}44`,
                               color: isActive ? "#ffffff" : "#c5cbd8",
                             }}
-                            onClick={() => setTheme(itemTheme.id)}
+                            onClick={() => {
+                              if (soundEnabled) playTone("click");
+                              setTheme(itemTheme.id);
+                            }}
                           >
                             <span
                               className="theme-color-dot"
@@ -2112,7 +2130,10 @@ export default function App() {
                           borderColor: cardDensity === "comfortable" ? "var(--accent)" : "var(--border)",
                           background: cardDensity === "comfortable" ? "rgba(99, 102, 241, 0.18)" : "transparent",
                         }}
-                        onClick={() => setCardDensity("comfortable")}
+                        onClick={() => {
+                          if (soundEnabled) playTone("click");
+                          setCardDensity("comfortable");
+                        }}
                       >
                         {t.densityComfortable}
                       </button>
@@ -2124,7 +2145,10 @@ export default function App() {
                           borderColor: cardDensity === "compact" ? "var(--accent)" : "var(--border)",
                           background: cardDensity === "compact" ? "rgba(99, 102, 241, 0.18)" : "transparent",
                         }}
-                        onClick={() => setCardDensity("compact")}
+                        onClick={() => {
+                          if (soundEnabled) playTone("click");
+                          setCardDensity("compact");
+                        }}
                       >
                         {t.densityCompact}
                       </button>
@@ -2140,7 +2164,10 @@ export default function App() {
                     </div>
                     <div
                       className={`switch ${ambientGlow ? "checked" : ""}`}
-                      onClick={() => setAmbientGlow(!ambientGlow)}
+                      onClick={() => {
+                        if (soundEnabled) playTone("toggle");
+                        setAmbientGlow(!ambientGlow);
+                      }}
                     >
                       <div className="switch-thumb" />
                     </div>
@@ -2155,7 +2182,10 @@ export default function App() {
                     </div>
                     <div
                       className={`switch ${soundEnabled ? "checked" : ""}`}
-                      onClick={() => setSoundEnabled(!soundEnabled)}
+                      onClick={() => {
+                        playTone("toggle");
+                        setSoundEnabled(!soundEnabled);
+                      }}
                     >
                       <div className="switch-thumb" />
                     </div>
