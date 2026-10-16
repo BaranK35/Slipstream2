@@ -382,7 +382,7 @@ export default function App() {
   }, [soundEnabled]);
 
   const getDisplayVersion = (rawVer?: string) => {
-    const v = (rawVer || "0.1.9").replace(/^v/, "");
+    const v = (rawVer || "0.2.0").replace(/^v/, "");
     const parts = v.split(/[.+]/);
     if (parts.length > 3) {
       return `${parts[0]}.${parts[1]}.${parts[2]}`;
@@ -649,9 +649,6 @@ export default function App() {
     } else {
       invoke("set_window_expanded", { expanded: false }).catch(() => {});
     }
-    return () => {
-      invoke("set_window_expanded", { expanded: false }).catch(() => {});
-    };
   }, [showAddModal]);
 
   useEffect(() => {
@@ -760,7 +757,7 @@ export default function App() {
             <img src={logoSvg} alt="Slipstream" className="brand-logo" />
             <div className="status-indicator busy" />
             <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
-            <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.1.9")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+            <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.2.0")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
           </div>
           <div className="window-controls">
             <button className="win-btn minimize" title={t.minimizeTitle} onClick={() => invoke("hide_window")}>
@@ -1274,7 +1271,7 @@ export default function App() {
           <img src={logoSvg} alt="Slipstream" className="brand-logo" />
           <div className={`status-indicator ${busy ? "busy" : on ? "active" : "inactive"}`} />
           <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
-          <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.1.9")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+          <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.2.0")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
           {isPortable && <span className="portable-pill" title={t.portableTitle}>{t.portableTag}</span>}
         </div>
         <div className="window-controls">
@@ -1959,7 +1956,7 @@ export default function App() {
                     <div className="pref-meta">
                       <span className="pref-name">{t.versionCheckLabel}</span>
                       <span className="pref-desc">
-                        {t.currentVersionPrefix} v{updateInfo?.current_version || "0.1.9"}
+                        {t.currentVersionPrefix} v{updateInfo?.current_version || "0.2.0"}
                         {updateInfo?.has_update ? (
                           <span style={{ color: "var(--cyan)", fontWeight: 600, marginLeft: 6 }}>
                             {t.newVersionLiveTag(updateInfo.latest_version)}

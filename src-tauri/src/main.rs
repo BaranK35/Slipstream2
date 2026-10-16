@@ -29,7 +29,9 @@ static MINIMIZE_TO_TRAY: AtomicBool = AtomicBool::new(true);
 static LAST_BLUR_HIDE_MS: AtomicI64 = AtomicI64::new(0);
 static LAUNCH_TIME_MS: AtomicI64 = AtomicI64::new(0);
 static FILE_DIALOG_ACTIVE: AtomicBool = AtomicBool::new(false);
-static TRAY_CLICK_STARTED_OPEN: AtomicBool = AtomicBool::new(false);
+static TRAY_CLICK_STARTED_FOCUSED: AtomicBool = AtomicBool::new(false);
+static IS_WINDOW_EXPANDED: AtomicBool = AtomicBool::new(false);
+static COLLAPSED_ORIGIN_X: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(i32::MIN);
 static SINGLE_INSTANCE_MUTEX: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
 fn now_ms() -> i64 {
@@ -138,37 +140,48 @@ fn set_file_dialog_active(active: bool) {
 #[tauri::command]
 fn set_window_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
+        let currently_expanded = IS_WINDOW_EXPANDED.load(Ordering::SeqCst);
+        if expanded == currently_expanded {
+            return Ok(());
+        }
+
         let scale = win.scale_factor().unwrap_or(1.0);
         let cur_pos = win.outer_position().unwrap_or(tauri::PhysicalPosition::new(0, 0));
-        let cur_size = win.outer_size().unwrap_or(tauri::PhysicalSize::new(
-            (380.0 * scale).round() as u32,
-            (620.0 * scale).round() as u32,
-        ));
 
-        let target_logical_w = if expanded { 820.0 } else { 380.0 };
-        let target_phys_w = (target_logical_w * scale).round() as i32;
-        let cur_phys_w = cur_size.width as i32;
+        let (min_x, max_x) = if let Ok(Some(mon)) = win.current_monitor() {
+            let work_area = mon.work_area();
+            let target_phys_w = ((if expanded { 820.0 } else { 380.0 }) * scale).round() as i32;
+            let min = work_area.position.x + 10;
+            let max = work_area.position.x + work_area.size.width as i32 - target_phys_w - 10;
+            (min, max.max(min))
+        } else {
+            (10, 1920)
+        };
 
-        let delta_phys_w = target_phys_w - cur_phys_w;
+        if expanded {
+            // Save collapsed origin X so we can restore exact position on close
+            COLLAPSED_ORIGIN_X.store(cur_pos.x, Ordering::SeqCst);
 
-        if delta_phys_w.abs() > 5 {
+            let delta_phys_w = ((820.0 - 380.0) * scale).round() as i32;
             let mut new_x = cur_pos.x - delta_phys_w;
-            if let Ok(Some(mon)) = win.current_monitor() {
-                let min_x = mon.work_area().position.x + 10;
-                if new_x < min_x {
-                    new_x = min_x;
-                }
-            } else if new_x < 10 {
-                new_x = 10;
-            }
+            new_x = new_x.clamp(min_x, max_x);
 
-            if expanded {
-                let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(new_x, cur_pos.y)));
-                let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(target_logical_w, 620.0)));
+            let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(new_x, cur_pos.y)));
+            let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(820.0, 620.0)));
+            IS_WINDOW_EXPANDED.store(true, Ordering::SeqCst);
+        } else {
+            let saved_x = COLLAPSED_ORIGIN_X.swap(i32::MIN, Ordering::SeqCst);
+            let mut new_x = if saved_x != i32::MIN {
+                saved_x
             } else {
-                let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(target_logical_w, 620.0)));
-                let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(new_x, cur_pos.y)));
-            }
+                let delta_phys_w = ((820.0 - 380.0) * scale).round() as i32;
+                cur_pos.x + delta_phys_w
+            };
+            new_x = new_x.clamp(min_x, max_x);
+
+            let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(380.0, 620.0)));
+            let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(new_x, cur_pos.y)));
+            IS_WINDOW_EXPANDED.store(false, Ordering::SeqCst);
         }
     }
     Ok(())
@@ -814,7 +827,7 @@ fn resolve_install_paths() -> (PathBuf, PathBuf) {
     (target_exe, install_dir)
 }
 
-const APP_VERSION: &str = "0.1.9";
+const APP_VERSION: &str = "0.2.0";
 
 #[tauri::command]
 async fn check_for_updates() -> UpdateInfo {
@@ -1264,6 +1277,9 @@ async fn autotune(
 
 /// Positions window in bottom-right corner of current work area (cleanly above taskbar).
 fn position_bottom_right(w: &WebviewWindow) -> Result<(), Box<dyn std::error::Error>> {
+    IS_WINDOW_EXPANDED.store(false, Ordering::SeqCst);
+    COLLAPSED_ORIGIN_X.store(i32::MIN, Ordering::SeqCst);
+
     let monitor = w
         .current_monitor()
         .ok()
@@ -1296,6 +1312,42 @@ fn position_bottom_right(w: &WebviewWindow) -> Result<(), Box<dyn std::error::Er
     }
     Ok(())
 }
+
+#[cfg(target_os = "windows")]
+fn force_bring_to_front(_w: &WebviewWindow) {
+    use std::ptr;
+    #[link(name = "user32")]
+    extern "system" {
+        fn FindWindowW(lpClassName: *const u16, lpWindowName: *const u16) -> isize;
+        fn ShowWindow(hWnd: isize, nCmdShow: i32) -> i32;
+        fn SetForegroundWindow(hWnd: isize) -> i32;
+        fn SetWindowPos(hWnd: isize, hWndInsertAfter: isize, X: i32, Y: i32, cx: i32, cy: i32, uFlags: u32) -> i32;
+        fn BringWindowToTop(hWnd: isize) -> i32;
+    }
+    const SW_RESTORE: i32 = 9;
+    const SW_SHOW: i32 = 5;
+    const HWND_TOPMOST: isize = -1;
+    const HWND_NOTOPMOST: isize = -2;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_SHOWWINDOW: u32 = 0x0040;
+
+    let win_name: Vec<u16> = "Slipstream\0".encode_utf16().collect();
+    let hwnd = unsafe { FindWindowW(ptr::null_mut(), win_name.as_ptr()) };
+    if hwnd != 0 {
+        unsafe {
+            ShowWindow(hwnd, SW_RESTORE);
+            ShowWindow(hwnd, SW_SHOW);
+            BringWindowToTop(hwnd);
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            SetForegroundWindow(hwnd);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn force_bring_to_front(_w: &WebviewWindow) {}
 
 /// Positions the toast notification window in the bottom-right corner directly above taskbar.
 fn position_toast_bottom_right(w: &WebviewWindow) -> Result<(), Box<dyn std::error::Error>> {
@@ -1341,6 +1393,8 @@ fn open_main_from_toast(app: tauri::AppHandle) {
     if let Some(main_w) = app.get_webview_window("main") {
         let _ = position_bottom_right(&main_w);
         let _ = main_w.show();
+        let _ = main_w.unminimize();
+        force_bring_to_front(&main_w);
         let _ = main_w.set_focus();
     }
 }
@@ -1364,15 +1418,19 @@ fn show_toast_notification(app: tauri::AppHandle, message: Option<String>) {
 }
 
 fn toggle_window(w: &WebviewWindow) {
-    if let Ok(vis) = w.is_visible() {
-        if vis {
-            LAST_BLUR_HIDE_MS.store(now_ms(), Ordering::SeqCst);
-            let _ = w.hide();
-        } else {
-            let _ = position_bottom_right(w);
-            let _ = w.show();
-            let _ = w.set_focus();
-        }
+    let is_vis = w.is_visible().unwrap_or(false);
+    let is_focused = w.is_focused().unwrap_or(false);
+    let is_min = w.is_minimized().unwrap_or(false);
+
+    if is_vis && is_focused && !is_min {
+        LAST_BLUR_HIDE_MS.store(now_ms(), Ordering::SeqCst);
+        let _ = w.hide();
+    } else {
+        let _ = position_bottom_right(w);
+        let _ = w.show();
+        let _ = w.unminimize();
+        force_bring_to_front(w);
+        let _ = w.set_focus();
     }
 }
 
@@ -1447,6 +1505,7 @@ fn main() {
                                     let _ = position_bottom_right(&w);
                                     let _ = w.show();
                                     let _ = w.unminimize();
+                                    force_bring_to_front(&w);
                                     let _ = w.set_focus();
                                 }
                             } else {
@@ -1661,7 +1720,7 @@ fn main() {
                             if let Some(toast_w) = app.get_webview_window("toast") {
                                 let _ = toast_w.hide();
                             }
-                            TRAY_CLICK_STARTED_OPEN.store(false, Ordering::SeqCst);
+                            TRAY_CLICK_STARTED_FOCUSED.store(false, Ordering::SeqCst);
                             LAST_BLUR_HIDE_MS.store(0, Ordering::SeqCst);
                             toggle_window(&w);
                         }
@@ -1718,32 +1777,34 @@ fn main() {
                                 MouseButtonState::Down => {
                                     let now = now_ms();
                                     let last_blur = LAST_BLUR_HIDE_MS.load(Ordering::SeqCst);
-                                    let vis = w.is_visible().unwrap_or(false);
-                                    if vis || (now - last_blur < 100) {
-                                        TRAY_CLICK_STARTED_OPEN.store(true, Ordering::SeqCst);
-                                    } else {
-                                        TRAY_CLICK_STARTED_OPEN.store(false, Ordering::SeqCst);
-                                    }
+                                    let is_open_and_focused = w.is_visible().unwrap_or(false)
+                                        && !w.is_minimized().unwrap_or(false)
+                                        && (w.is_focused().unwrap_or(false) || (now - last_blur < 200));
+                                    TRAY_CLICK_STARTED_FOCUSED.store(is_open_and_focused, Ordering::SeqCst);
                                 }
                                 MouseButtonState::Up => {
                                     let now = now_ms();
                                     let last_blur = LAST_BLUR_HIDE_MS.load(Ordering::SeqCst);
+                                    let started_focused = TRAY_CLICK_STARTED_FOCUSED.swap(false, Ordering::SeqCst);
                                     let is_vis = w.is_visible().unwrap_or(false);
-                                    if is_vis {
-                                        // Window is open; clicking tray icon toggles it to hidden
+                                    let is_min = w.is_minimized().unwrap_or(false);
+
+                                    if started_focused && is_vis && !is_min {
+                                        // Window was active and focused in foreground; click toggles it to hidden
                                         LAST_BLUR_HIDE_MS.store(now, Ordering::SeqCst);
                                         let _ = w.hide();
+                                    } else if started_focused && (now - last_blur < 200) {
+                                        // Already hidden by blur during this click sequence, keep hidden
                                     } else {
-                                        // Window is hidden; only reopen if the click gesture did not start when open
-                                        let started_open = TRAY_CLICK_STARTED_OPEN.swap(false, Ordering::SeqCst);
-                                        if started_open || (now - last_blur < 100) {
-                                            return;
-                                        }
+                                        // Window is hidden, minimized, behind other apps/games, or not focused:
+                                        // ALWAYS open immediately on the 1st click and bring to front over any game!
                                         if let Some(toast_w) = app.get_webview_window("toast") {
                                             let _ = toast_w.hide();
                                         }
                                         let _ = position_bottom_right(&w);
                                         let _ = w.show();
+                                        let _ = w.unminimize();
+                                        force_bring_to_front(&w);
                                         let _ = w.set_focus();
                                     }
                                 }
@@ -1946,5 +2007,34 @@ mod tests {
             ProcessItem { pid: 5678, name: "mychat.exe".into() },
         ];
         assert!(!is_game_process_running(&cfg, &app_procs), "Non-game custom platforms must NOT be classified as games");
+    }
+
+    #[test]
+    fn test_v020_version_upgrade() {
+        assert!(is_newer_version("0.2.0", "0.1.9"));
+        assert!(is_newer_version("v0.2.0", "v0.1.9"));
+        assert!(!is_newer_version("0.1.9", "0.2.0"));
+        assert!(!is_newer_version("0.2.0", "0.2.0"));
+    }
+
+    #[test]
+    fn test_expanded_window_clamping_bounds() {
+        let work_area_x = 0;
+        let work_area_w = 1920;
+        let scale = 1.0f64;
+        let target_phys_w = (380.0 * scale).round() as i32;
+        let min_x = work_area_x + 10;
+        let max_x = work_area_x + work_area_w - target_phys_w - 10; // 1920 - 380 - 10 = 1530
+
+        // If window attempts to slide beyond screen edge to the right (e.g. 2000px):
+        let requested_x = 2200;
+        let clamped_x = requested_x.clamp(min_x, max_x);
+        assert_eq!(clamped_x, 1530, "Window X must never exceed max_x bounds");
+        assert!(clamped_x + target_phys_w <= work_area_w);
+
+        // If window attempts to slide off-screen to the left:
+        let requested_left = -100;
+        let clamped_left = requested_left.clamp(min_x, max_x);
+        assert_eq!(clamped_left, 10, "Window X must never be less than min_x bounds");
     }
 }
