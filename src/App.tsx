@@ -1202,31 +1202,26 @@ export default function App() {
             <div className="update-content">
               <div className="update-header-row">
                 <span className="update-badge">
-                  {cfg?.auto_update ? "⚡ OTOMATİK GÜNCELLEME" : "YENİ SÜRÜM"}
+                  {cfg?.auto_update ? "⚡ OTOMATİK" : "YENİ SÜRÜM"}
                 </span>
                 <span className="update-version-tag">v{updateInfo.latest_version}</span>
               </div>
-              <p className="update-compact-desc">
-                {cfg?.auto_update
-                  ? (updating
-                      ? "İndiriliyor ve kuruluyor, uygulama yeniden başlatılacak..."
-                      : "Arka planda otomatik güncelleniyor...")
-                  : "Kritik performans ve altyapı yaması hazır."}
-              </p>
-              {updateInfo.release_notes && !cfg?.auto_update && (
-                <button
-                  type="button"
-                  className="update-details-link-btn"
-                  onClick={() => setShowReleaseNotesModal(true)}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="12" y1="16" x2="12" y2="12"></line>
-                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
-                  </svg>
-                  Detayları Göster
-                </button>
-              )}
+              <div className="update-summary-row">
+                <span className="update-compact-desc">
+                  {cfg?.auto_update
+                    ? (updating ? "İndiriliyor ve kuruluyor..." : "Arka planda otomatik güncelleniyor.")
+                    : "Yeni performans ve altyapı yaması hazır."}
+                </span>
+                {updateInfo.release_notes && !cfg?.auto_update && (
+                  <button
+                    type="button"
+                    className="update-details-link-btn"
+                    onClick={() => setShowReleaseNotesModal(true)}
+                  >
+                    Detaylar
+                  </button>
+                )}
+              </div>
             </div>
             {!cfg?.auto_update ? (
               <button

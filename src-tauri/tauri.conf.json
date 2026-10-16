@@ -54,10 +54,15 @@
     "resources": ["engine/*"],
     "windows": {
       "nsis": {
+        "template": "installer.nsi",
         "installMode": "currentUser",
+        "startMenuFolder": "Slipstream",
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
-        "languages": ["Turkish", "English"]
+        "languages": ["Turkish", "English"],
+        "customLanguageFiles": {
+          "Turkish": "resources/Turkish.nsh"
+        }
       }
     }
   }
