@@ -1,5 +1,6 @@
 {
-  "version": "0.1.6",
-  "notes": "v0.1.6 Sürüm Yenilikleri:\n- Sistemdeki Açık & Kapalı Oyun ve Uygulamaları Listeleme: Windows Kayıt Defteri ve Steam/Riot/Epic kütüphanelerini tarar, aktif olanları 'Çalışıyor', pasif olanları 'Kapalı' olarak gösterir.\n- Dosya Konumundan .exe Seçme: Sistem algılamazsa kullanıcının doğrudan explorer üzerinden oyun/uygulama (.exe) seçebilmesi sağlandı.\n- Otomatik ve Gizli Domain Bağlama: Eklenen platformların resmi CDN, API ve ses sunucuları arka planda otomatik yapılandırılır; arayüz sade ve temiz kalır.\n- 0ms Gecikmesiz Ses Motoru: Pre-rendered RAM tamponları ve WASAPI keep-alive ile ses efektlerindeki tüm gecikmeler sıfırlandı.\n- Anında ve Akıcı Kapanma: Kasarak ve donarak kapanma sorunu çözüldü, kapanışta pencere anında gizlenir ve servisler optimize sonlandırılır.\n- Düşük Gecikmeli Ses & Oyun Modu: Nagle algoritmasını iptal eder (TCP NoDelay), Network Throttling kısıtlamasını kaldırır.\n- Oyun Süreçlerine Yüksek İşlemci Önceliği: Aktif oyunları High Priority yapar.\n- Otonom Kendi Kendini İyileştiren Sistem (Self-Healing Auto-Bypass).\n- Yeni Temalar ('Erkek Rengi' Sakura & Onyx, Siberpunk, Zümrüt vb.) ve Kompakt Kart Modu.",
-  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.1.6/Slipstream_0.1.6_x64-setup.exe"
+  "version": "0.1.6.1",
+  "notes": "v0.1.6.1 Altyapı ve Sunucu Yaması:\n- Slipstream2 GitHub Depo Geçişi: Tüm sunucu ve güncelleme yolları başarıyla bağlandı.\n- Kompakt Güncelleme Çubuğu & Ayrıntılar Penceresi: Bildirim alanı sadeleştirildi, yenilik detayları ayrı pencereye taşındı.\n- Açık & Kapalı Süreç Algılama, 0ms Gecikmesiz Ses Motoru ve Hızlı Kapanma optimizasyonları.",
+  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.1.6.1/Slipstream_0.1.6.1_x64-setup.exe"
 }
+

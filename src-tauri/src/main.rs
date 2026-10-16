@@ -603,14 +603,15 @@ pub struct UpdateInfo {
 fn is_newer_version(latest: &str, current: &str) -> bool {
     let clean_l = latest.trim().trim_start_matches('v');
     let clean_c = current.trim().trim_start_matches('v');
-    let sem_l = clean_l.split(|c| c == '-' || c == '+').next().unwrap_or(clean_l);
-    let sem_c = clean_c.split(|c| c == '-' || c == '+').next().unwrap_or(clean_c);
-    let mut l_parts: Vec<u64> = sem_l.split('.').filter_map(|s| s.parse().ok()).collect();
-    let mut c_parts: Vec<u64> = sem_c.split('.').filter_map(|s| s.parse().ok()).collect();
-    while l_parts.len() < 3 {
+    let norm_l = clean_l.replace(['+', '-'], ".");
+    let norm_c = clean_c.replace(['+', '-'], ".");
+    let mut l_parts: Vec<u64> = norm_l.split('.').filter_map(|s| s.parse().ok()).collect();
+    let mut c_parts: Vec<u64> = norm_c.split('.').filter_map(|s| s.parse().ok()).collect();
+    let max_len = l_parts.len().max(c_parts.len()).max(3);
+    while l_parts.len() < max_len {
         l_parts.push(0);
     }
-    while c_parts.len() < 3 {
+    while c_parts.len() < max_len {
         c_parts.push(0);
     }
     if !l_parts.is_empty() && !c_parts.is_empty() {
@@ -782,9 +783,11 @@ fn resolve_install_paths() -> (PathBuf, PathBuf) {
     (target_exe, install_dir)
 }
 
+const APP_VERSION: &str = "0.1.6.1";
+
 #[tauri::command]
 async fn check_for_updates() -> UpdateInfo {
-    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let current_version = APP_VERSION.to_string();
     let client = match reqwest::Client::builder()
         .user_agent("Slipstream-Updater/1.0")
         .timeout(Duration::from_secs(12))
@@ -1832,4 +1835,20 @@ fn main() {
                 Engine::kill_all_winws();
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_newer_version;
+
+    #[test]
+    fn test_is_newer_version_hotfix() {
+        assert!(is_newer_version("0.1.6.1", "0.1.6"));
+        assert!(is_newer_version("0.1.6+1", "0.1.6"));
+        assert!(is_newer_version("v0.1.6.1", "v0.1.6"));
+        assert!(is_newer_version("0.1.7", "0.1.6.1"));
+        assert!(!is_newer_version("0.1.6", "0.1.6.1"));
+        assert!(!is_newer_version("0.1.6.1", "0.1.6.1"));
+        assert!(!is_newer_version("0.1.6", "0.1.6"));
+    }
 }

@@ -320,6 +320,7 @@ export default function App() {
   const updatingRef = useRef(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [showEulaModal, setShowEulaModal] = useState(false);
+  const [showReleaseNotesModal, setShowReleaseNotesModal] = useState(false);
 
   // Theme & Personalization synchronization
   useEffect(() => {
@@ -351,6 +352,15 @@ export default function App() {
       localStorage.setItem("slipstream_sound", String(soundEnabled));
     } catch {}
   }, [soundEnabled]);
+
+  const getDisplayVersion = (rawVer?: string) => {
+    const v = (rawVer || "0.1.6").replace(/^v/, "");
+    const parts = v.split(/[.+]/);
+    if (parts.length > 3) {
+      return `${parts[0]}.${parts[1]}.${parts[2]}`;
+    }
+    return v;
+  };
 
   // Auto-dismiss alerts
   useEffect(() => {
@@ -697,7 +707,7 @@ export default function App() {
             <img src={logoSvg} alt="Slipstream" className="brand-logo" />
             <div className="status-indicator busy" />
             <span className="brand-name" data-tauri-drag-region>Slipstream</span>
-            <span className="version-pill">v{updateInfo?.current_version || "0.1.6"}</span>
+            <span className="version-pill" title={`Sürüm: v${updateInfo?.current_version || "0.1.6"}`}>v{getDisplayVersion(updateInfo?.current_version)}</span>
           </div>
           <div className="window-controls">
             <button className="win-btn minimize" title="Tepsiye Küçült" onClick={() => invoke("hide_window")}>
@@ -1169,7 +1179,7 @@ export default function App() {
           <img src={logoSvg} alt="Slipstream" className="brand-logo" />
           <div className={`status-indicator ${busy ? "busy" : on ? "active" : "inactive"}`} />
           <span className="brand-name" data-tauri-drag-region>Slipstream</span>
-          <span className="version-pill">v{updateInfo?.current_version || "0.1.6"}</span>
+          <span className="version-pill" title={`Sürüm: v${updateInfo?.current_version || "0.1.6"}`}>v{getDisplayVersion(updateInfo?.current_version)}</span>
           {isPortable && <span className="portable-pill" title="Taşınabilir Tek Dosya Sürümü">Portable</span>}
         </div>
         <div className="window-controls">
@@ -1186,21 +1196,37 @@ export default function App() {
       </div>
 
       <div className="content-scroll">
-        {/* Update Notification Banner */}
+        {/* Compact Modern Update Notification Banner */}
         {updateInfo?.has_update && (
           <div className="update-banner">
             <div className="update-content">
-              <span className="update-badge">
-                {cfg?.auto_update ? "⚡ OTOMATİK GÜNCELLEME" : "YENİ SÜRÜM MEVCUT"}
-              </span>
-              <p className="update-text">
-                <b>v{updateInfo.latest_version}</b> hazır!{" "}
+              <div className="update-header-row">
+                <span className="update-badge">
+                  {cfg?.auto_update ? "⚡ OTOMATİK GÜNCELLEME" : "YENİ SÜRÜM"}
+                </span>
+                <span className="update-version-tag">v{updateInfo.latest_version}</span>
+              </div>
+              <p className="update-compact-desc">
                 {cfg?.auto_update
                   ? (updating
-                      ? "Arka planda indiriliyor ve kuruluyor, uygulama yeniden başlatılacak..."
-                      : "Arka planda otomatik kuruluyor...")
-                  : (updateInfo.release_notes || "Gelişmiş stabilite ve yeni optimizasyonlar.")}
+                      ? "İndiriliyor ve kuruluyor, uygulama yeniden başlatılacak..."
+                      : "Arka planda otomatik güncelleniyor...")
+                  : "Kritik performans ve altyapı yaması hazır."}
               </p>
+              {updateInfo.release_notes && !cfg?.auto_update && (
+                <button
+                  type="button"
+                  className="update-details-link-btn"
+                  onClick={() => setShowReleaseNotesModal(true)}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                  </svg>
+                  Detayları Göster
+                </button>
+              )}
             </div>
             {!cfg?.auto_update ? (
               <button
@@ -2562,6 +2588,65 @@ export default function App() {
                 {selectedSuggestions.length > 1
                   ? `Önerilenleri ve Alan Adını Ekle (${selectedSuggestions.length})`
                   : "Seçileni Ekle"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Release Notes Modal */}
+      {showReleaseNotesModal && updateInfo && (
+        <div className="modal-backdrop" onClick={() => setShowReleaseNotesModal(false)}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 16 }}>🚀</span>
+                <h3 className="modal-title">v{updateInfo.latest_version} Sürüm Yenilikleri</h3>
+              </div>
+              <button className="modal-close" onClick={() => setShowReleaseNotesModal(false)}>✕</button>
+            </div>
+            <div className="modal-body" style={{ maxHeight: "320px", overflowY: "auto", padding: "14px 16px" }}>
+              <div className="release-notes-list">
+                {updateInfo.release_notes.split("\n").map((line, idx) => {
+                  const trimmed = line.trim();
+                  if (!trimmed) return <div key={idx} style={{ height: 6 }} />;
+                  if (trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*")) {
+                    return (
+                      <div key={idx} className="release-note-item" style={{ display: "flex", gap: 8, marginBottom: 8, fontSize: 12.5, lineHeight: 1.45, color: "var(--text-main)" }}>
+                        <span style={{ color: "#10b981", fontWeight: "bold" }}>•</span>
+                        <span>{trimmed.replace(/^[-•*]\s*/, "")}</span>
+                      </div>
+                    );
+                  }
+                  if (trimmed.startsWith("###") || trimmed.startsWith("##") || trimmed.endsWith(":")) {
+                    return (
+                      <div key={idx} style={{ fontWeight: 700, fontSize: 13, color: "var(--primary-color, #10b981)", marginTop: idx > 0 ? 10 : 0, marginBottom: 6 }}>
+                        {trimmed.replace(/^#+\s*/, "")}
+                      </div>
+                    );
+                  }
+                  return (
+                    <p key={idx} style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 8, lineHeight: 1.4 }}>
+                      {trimmed}
+                    </p>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 10 }}>
+              <button className="secondary-btn" onClick={() => setShowReleaseNotesModal(false)}>
+                Kapat
+              </button>
+              <button
+                className="primary-btn"
+                onClick={() => {
+                  setShowReleaseNotesModal(false);
+                  handleApplyUpdate();
+                }}
+                disabled={updating}
+                style={{ padding: "8px 16px" }}
+              >
+                {updating ? "İndiriliyor..." : "Şimdi Güncelle"}
               </button>
             </div>
           </div>
