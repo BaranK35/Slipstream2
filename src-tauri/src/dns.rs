@@ -163,6 +163,17 @@ pub fn flush() {
         .output();
 }
 
+#[allow(clippy::permissions_set_readonly_false)]
+fn ensure_hosts_writable() {
+    if let Ok(meta) = fs::metadata(HOSTS_FILE) {
+        let mut perms = meta.permissions();
+        if perms.readonly() {
+            perms.set_readonly(false);
+            let _ = fs::set_permissions(HOSTS_FILE, perms);
+        }
+    }
+}
+
 /// Removes Slipstream bypass mappings from the Windows hosts file.
 pub fn clear_bypass_hosts() {
     if let Ok(content) = fs::read_to_string(HOSTS_FILE) {
@@ -186,6 +197,7 @@ pub fn clear_bypass_hosts() {
             if !cleaned.ends_with("\r\n") {
                 cleaned.push_str("\r\n");
             }
+            ensure_hosts_writable();
             let _ = fs::write(HOSTS_FILE, cleaned);
             flush();
         }
@@ -229,6 +241,7 @@ pub fn apply_bypass_hosts(cfg: &Config) {
     output.push_str(HOSTS_TAG_END);
     output.push_str("\r\n");
 
+    ensure_hosts_writable();
     let _ = fs::write(HOSTS_FILE, output);
     flush();
 }

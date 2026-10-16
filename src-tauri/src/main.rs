@@ -406,7 +406,7 @@ fn manage_game_process_priorities(cfg: &Config, running_procs: &[ProcessItem]) {
     }
     for plat in &cfg.custom_platforms {
         if plat.category == "game" {
-            for exe in &cfg.custom_exes {
+            if let Some(ref exe) = plat.exe_name {
                 game_exes.insert(exe.to_lowercase());
             }
         }
@@ -482,9 +482,6 @@ fn is_game_process_running(cfg: &Config, running_procs: &[ProcessItem]) -> bool 
             if let Some(ref exe) = plat.exe_name {
                 game_exes.insert(exe.to_lowercase());
             }
-            for exe in &cfg.custom_exes {
-                game_exes.insert(exe.to_lowercase());
-            }
         }
     }
     running_procs.iter().any(|p| game_exes.contains(&p.name.to_lowercase()))
@@ -508,13 +505,6 @@ fn get_detected_active_apps(cfg: Config) -> Vec<String> {
         if let Some(ref exe) = plat.exe_name {
             if running_lower.contains(&exe.to_lowercase()) {
                 detected.push(plat.id.clone());
-                continue;
-            }
-        }
-        for exe in &cfg.custom_exes {
-            if running_lower.contains(&exe.to_lowercase()) {
-                detected.push(plat.id.clone());
-                break;
             }
         }
     }
@@ -597,6 +587,7 @@ async fn probe_one(url: &str) -> Option<String> {
 
     // 3) TLS + HTTP GET
     let client = match reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
         .timeout(Duration::from_millis(3500))
         .no_proxy()
         .pool_max_idle_per_host(0)
@@ -1073,10 +1064,10 @@ async fn apply_update(app: tauri::AppHandle, s: State<'_, AppState>, download_ur
             Start-Process -FilePath $installer -ArgumentList $instArgs -Wait -WindowStyle Hidden;\
             Remove-Item -LiteralPath \"$targetExe.old\" -Force -ErrorAction SilentlyContinue;\
             Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue;\
-            if (Test-Path -LiteralPath $targetExe) {{\
-                Start-Process -FilePath $targetExe -ArgumentList '--minimized' -WindowStyle Hidden;\
-            }} elseif (Test-Path -LiteralPath \"$installDir\\slipstream.exe\") {{\
+            if (Test-Path -LiteralPath \"$installDir\\slipstream.exe\") {{\
                 Start-Process -FilePath \"$installDir\\slipstream.exe\" -ArgumentList '--minimized' -WindowStyle Hidden;\
+            }} elseif (Test-Path -LiteralPath $targetExe) {{\
+                Start-Process -FilePath $targetExe -ArgumentList '--minimized' -WindowStyle Hidden;\
             }}",
             target = target_str.replace('\'', "''"),
             dir = install_str.replace('\'', "''"),
@@ -1176,18 +1167,28 @@ async fn autotune(
     s: State<'_, AppState>,
     mut cfg: Config,
 ) -> Result<Option<String>, String> {
-    // Benchmark targets covering Discord, YouTube, Roblox, X, and user targets
-    let mut targets = vec![
-        "https://discord.com".to_string(),
-        "https://gateway.discord.gg".to_string(),
-        "https://www.youtube.com".to_string(),
-        "https://www.roblox.com".to_string(),
-        "https://x.com".to_string(),
-    ];
+    // Benchmark targets covering active user services
+    let mut targets = Vec::new();
+    if cfg.enabled_apps.iter().any(|a| a == "discord") {
+        targets.push("https://discord.com".to_string());
+        targets.push("https://gateway.discord.gg".to_string());
+    }
+    if cfg.enabled_apps.iter().any(|a| a == "roblox") {
+        targets.push("https://www.roblox.com".to_string());
+    }
+    if cfg.enabled_apps.iter().any(|a| a == "youtube") {
+        targets.push("https://www.youtube.com".to_string());
+    }
+    if cfg.enabled_apps.iter().any(|a| a == "x") {
+        targets.push("https://x.com".to_string());
+    }
     for u in profiles::probe_urls(&cfg) {
         if !targets.contains(&u) {
             targets.push(u);
         }
+    }
+    if targets.is_empty() {
+        targets.push("https://discord.com".to_string());
     }
 
     let candidate_ids = isp::order(&cfg.isp);
@@ -1548,13 +1549,6 @@ fn main() {
                                     if let Some(ref exe) = plat.exe_name {
                                         if running_lower.contains(&exe.to_lowercase()) {
                                             detected.push(plat.id.clone());
-                                            continue;
-                                        }
-                                    }
-                                    for exe in &cfg.custom_exes {
-                                        if running_lower.contains(&exe.to_lowercase()) {
-                                            detected.push(plat.id.clone());
-                                            break;
                                         }
                                     }
                                 }
@@ -1574,9 +1568,23 @@ fn main() {
                         if auto_probe_cycle >= 10 {
                             auto_probe_cycle = 0;
                             if should_probe {
-                                let probe_targets = ["https://discord.com", "https://www.roblox.com"];
+                                let mut probe_targets: Vec<&str> = Vec::new();
+                                if let Some(state_tmp) = app_handle.try_state::<AppState>() {
+                                    let eng_tmp = state_tmp.engine.lock().unwrap();
+                                    let active_cfg = Config::load(&eng_tmp.dir);
+                                    if active_cfg.enabled_apps.iter().any(|a| a == "discord") {
+                                        probe_targets.push("https://discord.com");
+                                    }
+                                    if active_cfg.enabled_apps.iter().any(|a| a == "roblox") {
+                                        probe_targets.push("https://www.roblox.com");
+                                    }
+                                }
+                                if probe_targets.is_empty() {
+                                    probe_targets.push("https://discord.com");
+                                }
+
                                 let mut probe_failed = false;
-                                for target in probe_targets {
+                                for target in &probe_targets {
                                     if probe_one(target).await.is_some() {
                                         probe_failed = true;
                                         break;
@@ -1585,6 +1593,7 @@ fn main() {
 
                                 if probe_failed {
                                     let candidates = isp::order(&current_isp);
+                                    let mut recovered = false;
                                     for cand in candidates {
                                         if current_strat.as_deref() == Some(cand) {
                                             continue;
@@ -1600,15 +1609,31 @@ fn main() {
 
                                         if started {
                                             tokio::time::sleep(Duration::from_millis(600)).await;
-                                            if probe_one("https://discord.com").await.is_none() {
+                                            let mut cand_ok = true;
+                                            for target in &probe_targets {
+                                                if probe_one(target).await.is_some() {
+                                                    cand_ok = false;
+                                                    break;
+                                                }
+                                            }
+                                            if cand_ok {
                                                 let mut test_cfg = Config::load(&eng_dir);
                                                 test_cfg.strategy = Some(cand.to_string());
                                                 test_cfg.save(&eng_dir);
                                                 let s_name = isp::strategy(cand).name;
                                                 let _ = app_handle.emit("auto_bypass_recovered", format!("⚡ İnternet sağlayıcısı engeli aşıldı! Otomatik olarak '{}' stratejisine geçildi.", s_name));
                                                 let _ = app_handle.emit("strategy_changed", cand.to_string());
+                                                recovered = true;
                                                 break;
                                             }
+                                        }
+                                    }
+                                    if !recovered {
+                                        if let Some(state_inner) = app_handle.try_state::<AppState>() {
+                                            let mut eng_inner = state_inner.engine.lock().unwrap();
+                                            let mut orig_cfg = Config::load(&eng_dir);
+                                            orig_cfg.strategy = current_strat.clone();
+                                            let _ = eng_inner.start(&orig_cfg);
                                         }
                                     }
                                 }
@@ -1875,7 +1900,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::is_newer_version;
+    use super::*;
 
     #[test]
     fn test_is_newer_version_hotfix() {
@@ -1886,5 +1911,40 @@ mod tests {
         assert!(!is_newer_version("0.1.6", "0.1.6.1"));
         assert!(!is_newer_version("0.1.6.1", "0.1.6.1"));
         assert!(!is_newer_version("0.1.6", "0.1.6"));
+    }
+
+    #[test]
+    fn test_custom_platform_game_detection() {
+        let mut cfg = Config::default();
+        cfg.custom_platforms = vec![
+            engine::CustomPlatform {
+                id: "custom_cyberpunk".into(),
+                name: "Cyberpunk 2077".into(),
+                category: "game".into(),
+                icon: "🎮".into(),
+                domains: vec!["cyberpunk.net".into()],
+                exe_name: Some("Cyberpunk2077.exe".into()),
+                exe_path: None,
+            },
+            engine::CustomPlatform {
+                id: "custom_chat".into(),
+                name: "My Chat".into(),
+                category: "app".into(),
+                icon: "📱".into(),
+                domains: vec!["mychat.com".into()],
+                exe_name: Some("mychat.exe".into()),
+                exe_path: None,
+            },
+        ];
+
+        let procs = vec![
+            ProcessItem { pid: 1234, name: "Cyberpunk2077.exe".into() },
+        ];
+        assert!(is_game_process_running(&cfg, &procs));
+
+        let app_procs = vec![
+            ProcessItem { pid: 5678, name: "mychat.exe".into() },
+        ];
+        assert!(!is_game_process_running(&cfg, &app_procs), "Non-game custom platforms must NOT be classified as games");
     }
 }

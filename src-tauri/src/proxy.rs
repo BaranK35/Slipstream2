@@ -77,7 +77,8 @@ pub fn flush_dns_cache() {
 
 /// Resolves a hostname using DNS-over-HTTPS with configurable provider and TTL caching.
 pub async fn resolve_doh_with_provider(host: &str, provider: &str) -> Result<Ipv4Addr, String> {
-    let clean_host = host.trim().trim_end_matches('.').to_lowercase();
+    let raw_clean = host.trim().trim_end_matches('.').to_lowercase();
+    let clean_host = raw_clean.split(':').next().unwrap_or(&raw_clean);
     if let Ok(ip) = clean_host.parse::<Ipv4Addr>() {
         return Ok(ip);
     }
@@ -85,7 +86,7 @@ pub async fn resolve_doh_with_provider(host: &str, provider: &str) -> Result<Ipv
     // Check memory cache
     {
         let cache = get_dns_cache().lock().unwrap();
-        if let Some((ips, expiry)) = cache.get(&clean_host) {
+        if let Some((ips, expiry)) = cache.get(clean_host) {
             if Instant::now() < *expiry && !ips.is_empty() {
                 return Ok(ips[0]);
             }
@@ -134,7 +135,7 @@ pub async fn resolve_doh_with_provider(host: &str, provider: &str) -> Result<Ipv
                                 if let Some(&first) = ips.first() {
                                     let mut cache = get_dns_cache().lock().unwrap();
                                     cache.insert(
-                                        clean_host.clone(),
+                                        clean_host.to_string(),
                                         (ips, Instant::now() + Duration::from_secs(600)),
                                     );
                                     return Ok(first);
@@ -286,7 +287,8 @@ pub const DISCORD_DOMAINS: &[&str] = &[
 
 pub fn is_discord_host(host: &str) -> bool {
     let h = host.trim().trim_end_matches('.').to_lowercase();
-    DISCORD_DOMAINS.iter().any(|&d| h == d || h.ends_with(&format!(".{d}")))
+    let clean = h.split(':').next().unwrap_or(&h);
+    DISCORD_DOMAINS.iter().any(|&d| clean == d || clean.ends_with(&format!(".{d}")))
 }
 
 fn rewrite_discord_urls(text: &str, port: u16) -> String {
@@ -414,13 +416,19 @@ pub async fn run_discord_relay(stop: Arc<AtomicBool>, port: u16) {
             }
 
             let (target_host, target_path) = if let Some(rest) = raw_path.strip_prefix("/__h/") {
-                if let Some(slash_idx) = rest.find('/') {
-                    (&rest[..slash_idx], &rest[slash_idx..])
+                if let Some(pos) = rest.find(['/', '?']) {
+                    let (h, p) = rest.split_at(pos);
+                    let path = if p.starts_with('?') {
+                        format!("/{p}")
+                    } else {
+                        p.to_string()
+                    };
+                    (h, path)
                 } else {
-                    (rest, "/")
+                    (rest, "/".to_string())
                 }
             } else {
-                ("updates.discord.com", raw_path)
+                ("updates.discord.com", raw_path.to_string())
             };
 
             if !is_discord_host(target_host) {
@@ -726,6 +734,29 @@ pub async fn check_network_health(provider: &str) -> NetworkHealth {
         discord_relay_ok,
         windivert_driver_ok,
         active_doh_provider: provider.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_discord_host() {
+        assert!(is_discord_host("discord.com"));
+        assert!(is_discord_host("gateway.discord.gg"));
+        assert!(is_discord_host("updates.discord.com:443"));
+        assert!(is_discord_host("DISCORD.COM"));
+        assert!(!is_discord_host("google.com"));
+        assert!(!is_discord_host("notdiscord.com"));
+    }
+
+    #[test]
+    fn test_rewrite_discord_urls() {
+        let original = "https://updates.discord.com/app/manifest https://other.com/file";
+        let rewritten = rewrite_discord_urls(original, 18809);
+        assert!(rewritten.contains("http://127.0.0.1:18809/__h/updates.discord.com/app/manifest"));
+        assert!(rewritten.contains("https://other.com/file"));
     }
 }
 
