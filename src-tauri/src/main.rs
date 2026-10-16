@@ -806,6 +806,8 @@ async fn check_for_updates() -> UpdateInfo {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let version_urls = [
+        format!("https://raw.githubusercontent.com/BaranK35/Slipstream2/main/version.json?t={now_ts}"),
+        format!("https://github.com/BaranK35/Slipstream2/raw/main/version.json?t={now_ts}"),
         format!("https://raw.githubusercontent.com/BaranK35/Slipstreamtest2/main/version.json?t={now_ts}"),
         format!("https://github.com/BaranK35/Slipstreamtest2/raw/main/version.json?t={now_ts}"),
     ];
@@ -868,54 +870,52 @@ async fn check_for_updates() -> UpdateInfo {
     }
 
     // 2) Fallback to GitHub Releases API (releases/latest)
-    if let Ok(resp) = client
-        .get("https://api.github.com/repos/BaranK35/Slipstreamtest2/releases/latest")
-        .header("Cache-Control", "no-cache")
-        .header("Pragma", "no-cache")
-        .send()
-        .await
-    {
-        if resp.status().is_success() {
-            if let Ok(text) = resp.text().await {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(tag) = json.get("tag_name").and_then(|v| v.as_str()) {
-                        let latest = tag.trim_start_matches('v').to_string();
-                        let has = is_newer_version(&latest, &current_version);
-                        let notes = json.get("body").and_then(|v| v.as_str()).unwrap_or("Yeni sürüm GitHub üzerinde yayınlandı.");
-                        let mut dl_url = String::new();
-                        let mut asset_ready = false;
-                        if let Some(assets) = json.get("assets").and_then(|a| a.as_array()) {
-                            for asset in assets {
-                                if let (Some(name), Some(browser_url), Some(state), Some(size)) = (
-                                    asset.get("name").and_then(|n| n.as_str()),
-                                    asset.get("browser_download_url").and_then(|u| u.as_str()),
-                                    asset.get("state").and_then(|s| s.as_str()),
-                                    asset.get("size").and_then(|s| s.as_u64()),
-                                ) {
-                                    if name.ends_with(".exe") && state == "uploaded" && size >= 2_000_000 {
-                                        dl_url = browser_url.to_string();
-                                        asset_ready = true;
-                                        break;
+    let api_urls = [
+        "https://api.github.com/repos/BaranK35/Slipstream2/releases/latest",
+        "https://api.github.com/repos/BaranK35/Slipstreamtest2/releases/latest",
+    ];
+    for api_url in api_urls {
+        if let Ok(resp) = client
+            .get(api_url)
+            .header("Cache-Control", "no-cache")
+            .header("Pragma", "no-cache")
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                if let Ok(text) = resp.text().await {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if let Some(tag) = json.get("tag_name").and_then(|v| v.as_str()) {
+                            let latest = tag.trim_start_matches('v').to_string();
+                            let has = is_newer_version(&latest, &current_version);
+                            let notes = json.get("body").and_then(|v| v.as_str()).unwrap_or("Yeni sürüm GitHub üzerinde yayınlandı.");
+                            let mut dl_url = String::new();
+                            let mut asset_ready = false;
+                            if let Some(assets) = json.get("assets").and_then(|a| a.as_array()) {
+                                for asset in assets {
+                                    if let (Some(name), Some(browser_url), Some(state), Some(size)) = (
+                                        asset.get("name").and_then(|n| n.as_str()),
+                                        asset.get("browser_download_url").and_then(|u| u.as_str()),
+                                        asset.get("state").and_then(|s| s.as_str()),
+                                        asset.get("size").and_then(|s| s.as_u64()),
+                                    ) {
+                                        if name.ends_with(".exe") && (name.contains("setup") || name.contains("Setup")) && state == "uploaded" && size >= 2_000_000 {
+                                            dl_url = browser_url.to_string();
+                                            asset_ready = true;
+                                            break;
+                                        }
                                     }
                                 }
                             }
-                        }
-                        if has && asset_ready && !dl_url.is_empty() {
-                            return UpdateInfo {
-                                has_update: true,
-                                current_version: current_version.clone(),
-                                latest_version: latest,
-                                release_notes: if notes.trim().is_empty() { "Yeni sürüm GitHub üzerinde yayınlandı.".into() } else { notes.to_string() },
-                                download_url: dl_url,
-                            };
-                        } else {
-                            return UpdateInfo {
-                                has_update: false,
-                                current_version: current_version.clone(),
-                                latest_version: current_version,
-                                release_notes: "".into(),
-                                download_url: "".into(),
-                            };
+                            if has && asset_ready {
+                                return UpdateInfo {
+                                    has_update: true,
+                                    current_version: current_version.clone(),
+                                    latest_version: latest,
+                                    release_notes: notes.to_string(),
+                                    download_url: dl_url,
+                                };
+                            }
                         }
                     }
                 }
@@ -944,10 +944,21 @@ async fn apply_update(app: tauri::AppHandle, s: State<'_, AppState>, download_ur
         .build()
         .map_err(|e| e.to_string())?;
 
-    let bytes = client
-        .get(&download_url)
-        .send()
-        .await
+    let resp = match client.get(&download_url).send().await {
+        Ok(r) if r.status().is_success() => Ok(r),
+        _ => {
+            let alt_url = if download_url.contains("Slipstreamtest2") {
+                download_url.replace("Slipstreamtest2", "Slipstream2")
+            } else if download_url.contains("Slipstream2") {
+                download_url.replace("Slipstream2", "Slipstreamtest2")
+            } else {
+                download_url.clone()
+            };
+            client.get(&alt_url).send().await
+        }
+    };
+
+    let bytes = resp
         .map_err(|e| e.to_string())?
         .bytes()
         .await
