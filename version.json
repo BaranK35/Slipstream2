@@ -1,5 +1,5 @@
 {
-  "version": "0.2.1",
-  "notes": "v0.2.1 Güncellemesi:\n- Sıfır gecikmeli yerel Windows ses motoru.\n- Ultra derin uyku modu (0% GPU, <15MB RAM).\n- Sadeleştirilmiş varsayılan liste (Discord & Roblox).",
-  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.1/Slipstream_0.2.1_x64-setup.exe"
+  "version": "0.2.2",
+  "notes": "v0.2.2 Güncellemesi:\n- Kurulumda ve uygulamada varsayılan dil İngilizce yapıldı, özel dil seçici arayüzü eklendi.\n- Canlı Discord Ses (Frankfurt RTC) sunucusu gecikme göstergesi eklendi.\n- Süreç algılama ayar açıklaması netleştirildi.",
+  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.2/Slipstream_0.2.2_x64-setup.exe"
 }
