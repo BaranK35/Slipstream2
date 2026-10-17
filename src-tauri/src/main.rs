@@ -1097,6 +1097,15 @@ fn get_detected_active_apps(cfg: Config) -> Vec<String> {
 }
 
 #[tauri::command]
+fn is_game_running() -> bool {
+    let procs = get_running_process_names();
+    procs.iter().any(|p| {
+        let clean = p.strip_suffix(".exe").or_else(|| p.strip_suffix(".EXE")).unwrap_or(p);
+        apps::is_likely_game(clean, p, "")
+    })
+}
+
+#[tauri::command]
 fn suggest_related_domains(domain: String) -> profiles::DomainSuggestionResult {
     profiles::get_domain_suggestions(&domain)
 }
@@ -2446,6 +2455,7 @@ fn main() {
             show_toast_notification,
             is_portable,
             get_detected_active_apps,
+            is_game_running,
             suggest_related_domains,
             scan_apps,
             pick_exe_file,

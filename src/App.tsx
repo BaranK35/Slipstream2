@@ -269,6 +269,11 @@ export default function App() {
   const [updating, setUpdating] = useState(false);
   const updatingRef = useRef(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [justUpdatedVersion, setJustUpdatedVersion] = useState<string | null>(null);
+  const cfgRef = useRef<Cfg | null>(null);
+  useEffect(() => {
+    cfgRef.current = cfg;
+  }, [cfg]);
   const [showEulaModal, setShowEulaModal] = useState(false);
   const [showReleaseNotesModal, setShowReleaseNotesModal] = useState(false);
 
@@ -419,25 +424,52 @@ export default function App() {
           release_notes: string;
           download_url: string;
         }>("check_for_updates")
-          .then((info) => {
+          .then(async (info) => {
             setUpdateInfo(info);
-            if (info.has_update && initialCfg.auto_update && info.download_url) {
-              const LAST_UPDATE_KEY = "slipstream_last_auto_update_ts";
-              const LAST_UPDATE_VER_KEY = "slipstream_last_auto_update_ver";
-              const lastAttempt = Number(localStorage.getItem(LAST_UPDATE_KEY) || "0");
-              const lastAttemptVer = localStorage.getItem(LAST_UPDATE_VER_KEY) || "";
-              const now = Date.now();
 
-              // Prevent infinite update loop:
-              // 1) Never auto-update to the same target version more than once within 2 hours
-              // 2) Never trigger auto-update within 30 minutes of any previous auto-update
-              const isSameVersionRecent = lastAttemptVer === info.latest_version && (now - lastAttempt < 2 * 60 * 60 * 1000);
-              const isRecentAttempt = (now - lastAttempt < 30 * 60 * 1000);
+            // Check if app was just updated to current_version
+            try {
+              const INSTALLED_VER_KEY = "slipstream_installed_version";
+              const prevInstalledVer = localStorage.getItem(INSTALLED_VER_KEY);
+              if (prevInstalledVer && prevInstalledVer !== info.current_version) {
+                setJustUpdatedVersion(info.current_version);
+              } else if (!prevInstalledVer) {
+                localStorage.setItem(INSTALLED_VER_KEY, info.current_version);
+              }
+            } catch {}
 
-              if (!isSameVersionRecent && !isRecentAttempt) {
-                localStorage.setItem(LAST_UPDATE_KEY, String(now));
-                localStorage.setItem(LAST_UPDATE_VER_KEY, info.latest_version);
-                handleApplyUpdate(info.download_url);
+            if (info.has_update) {
+              if (initialCfg.auto_update && info.download_url) {
+                // If auto_update is ON, check if user is playing a game before background update
+                const isGameActive = await invoke<boolean>("is_game_running").catch(() => false);
+                if (!isGameActive) {
+                  const LAST_UPDATE_KEY = "slipstream_last_auto_update_ts";
+                  const LAST_UPDATE_VER_KEY = "slipstream_last_auto_update_ver";
+                  const lastAttempt = Number(localStorage.getItem(LAST_UPDATE_KEY) || "0");
+                  const lastAttemptVer = localStorage.getItem(LAST_UPDATE_VER_KEY) || "";
+                  const now = Date.now();
+
+                  // Prevent infinite update loop:
+                  // 1) Never auto-update to the same target version more than once within 2 hours
+                  // 2) Never trigger auto-update within 30 minutes of any previous auto-update
+                  const isSameVersionRecent = lastAttemptVer === info.latest_version && (now - lastAttempt < 2 * 60 * 60 * 1000);
+                  const isRecentAttempt = (now - lastAttempt < 30 * 60 * 1000);
+
+                  if (!isSameVersionRecent && !isRecentAttempt) {
+                    localStorage.setItem(LAST_UPDATE_KEY, String(now));
+                    localStorage.setItem(LAST_UPDATE_VER_KEY, info.latest_version);
+                    handleApplyUpdate(info.download_url, true);
+                  }
+                }
+              } else if (!initialCfg.auto_update) {
+                // If auto_update is OFF, send system toast notification to notify user
+                const TOAST_SEEN_KEY = `slipstream_toast_seen_${info.latest_version}`;
+                if (!sessionStorage.getItem(TOAST_SEEN_KEY)) {
+                  sessionStorage.setItem(TOAST_SEEN_KEY, "1");
+                  invoke("show_toast_notification", {
+                    message: `Yeni bir güncelleme mevcut (v${info.latest_version}). Güncellemek için tıklayın.`
+                  }).catch(() => {});
+                }
               }
             }
           })
@@ -512,7 +544,39 @@ export default function App() {
     // Check initial Discord diagnosis
     invoke<DiscordDiagnosis>("diagnose_discord").then(setDiscordDiag).catch(() => {});
 
+    // Periodic background update check (every 45 minutes)
+    const periodicUpdateTimer = setInterval(async () => {
+      try {
+        const info = await invoke<{
+          has_update: boolean;
+          current_version: string;
+          latest_version: string;
+          release_notes: string;
+          download_url: string;
+        }>("check_for_updates");
+        setUpdateInfo(info);
+        if (info.has_update) {
+          const autoUp = cfgRef.current?.auto_update ?? true;
+          if (autoUp && info.download_url) {
+            const isGameActive = await invoke<boolean>("is_game_running").catch(() => false);
+            if (!isGameActive) {
+              handleApplyUpdate(info.download_url, true);
+            }
+          } else if (!autoUp) {
+            const TOAST_SEEN_KEY = `slipstream_toast_seen_${info.latest_version}`;
+            if (!sessionStorage.getItem(TOAST_SEEN_KEY)) {
+              sessionStorage.setItem(TOAST_SEEN_KEY, "1");
+              invoke("show_toast_notification", {
+                message: `Yeni bir güncelleme mevcut (v${info.latest_version}). Güncellemek için tıklayın.`
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch {}
+    }, 45 * 60 * 1000);
+
     return () => {
+      clearInterval(periodicUpdateTimer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       unlistenVis.then((f) => f());
       unlistenAutotune.then((f) => f());
@@ -1130,7 +1194,10 @@ export default function App() {
       setUpdateInfo(info);
       if (info.has_update) {
         if (cfg?.auto_update && info.download_url) {
-          handleApplyUpdate(info.download_url);
+          const isGame = await invoke<boolean>("is_game_running").catch(() => false);
+          if (!isGame) {
+            handleApplyUpdate(info.download_url, true);
+          }
         } else if (manual) {
           setSuccessMsg(t.suc_updateFound(info.latest_version));
         }
@@ -1143,7 +1210,7 @@ export default function App() {
     if (manual) setCheckingUpdates(false);
   }
 
-  async function handleApplyUpdate(downloadUrl?: string) {
+  async function handleApplyUpdate(downloadUrl?: string, silent: boolean = false) {
     if (updatingRef.current) return;
     const url = downloadUrl || updateInfo?.download_url;
     if (!url) return;
@@ -1157,11 +1224,15 @@ export default function App() {
     } catch {}
     updatingRef.current = true;
     setUpdating(true);
-    setSuccessMsg(t.suc_updatingNotice);
+    if (!silent) {
+      setSuccessMsg(t.suc_updatingNotice);
+    }
     try {
       await invoke("apply_update", { downloadUrl: url });
     } catch (e) {
-      setErr(t.err_updateFailed(String(e)));
+      if (!silent) {
+        setErr(t.err_updateFailed(String(e)));
+      }
       setUpdating(false);
       updatingRef.current = false;
     }
@@ -1312,6 +1383,47 @@ export default function App() {
       </div>
 
       <div className="content-scroll">
+        {/* Recently Updated Success Banner (Dismissible by user) */}
+        {justUpdatedVersion && (
+          <div className="update-success-banner">
+            <div className="update-success-left">
+              <span className="update-success-icon">🎉</span>
+              <div className="update-success-text-col">
+                <span className="update-success-title">
+                  {lang === "tr" ? "Slipstream Güncellendi!" : "Slipstream Updated!"}
+                </span>
+                <span className="update-success-desc">
+                  {lang === "tr"
+                    ? `Uygulama başarıyla v${justUpdatedVersion} sürümüne güncellendi.`
+                    : `App successfully updated to v${justUpdatedVersion}.`}
+                </span>
+              </div>
+            </div>
+            <div className="update-success-actions">
+              <button
+                type="button"
+                className="update-notes-btn"
+                onClick={() => setShowReleaseNotesModal(true)}
+              >
+                {lang === "tr" ? "Yenilikler" : "What's New"}
+              </button>
+              <button
+                type="button"
+                className="update-success-close-btn"
+                title={lang === "tr" ? "Bildirimi Kapat" : "Close Notification"}
+                onClick={() => {
+                  try {
+                    localStorage.setItem("slipstream_installed_version", justUpdatedVersion);
+                  } catch {}
+                  setJustUpdatedVersion(null);
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Compact Modern Update Notification Banner */}
         {updateInfo?.has_update && (
           <div className="update-banner">
@@ -1328,7 +1440,7 @@ export default function App() {
                     ? (updating ? t.autoUpdatingText : t.autoBgUpdatingText)
                     : t.manualUpdateText}
                 </span>
-                {updateInfo.release_notes && !cfg?.auto_update && (
+                {updateInfo.release_notes && (
                   <button
                     type="button"
                     className="update-details-link-btn"
@@ -2873,17 +2985,19 @@ export default function App() {
               <button className="secondary-btn" onClick={() => setShowReleaseNotesModal(false)}>
                 {t.closeBtn2}
               </button>
-              <button
-                className="primary-btn"
-                onClick={() => {
-                  setShowReleaseNotesModal(false);
-                  handleApplyUpdate();
-                }}
-                disabled={updating}
-                style={{ padding: "8px 16px" }}
-              >
-                {updating ? t.downloadingText : t.updateNowBtn2}
-              </button>
+              {updateInfo.has_update && !cfg?.auto_update && (
+                <button
+                  className="primary-btn"
+                  onClick={() => {
+                    setShowReleaseNotesModal(false);
+                    handleApplyUpdate();
+                  }}
+                  disabled={updating}
+                  style={{ padding: "8px 16px" }}
+                >
+                  {updating ? t.downloadingText : t.updateNowBtn2}
+                </button>
+              )}
             </div>
           </div>
         </div>
