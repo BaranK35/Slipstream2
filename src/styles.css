@@ -228,6 +228,29 @@ html, body {
   transition: all 0.2s ease;
 }
 
+.win-btn.feedback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 28px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 0;
+}
+
+.win-btn.feedback:hover {
+  background: rgba(88, 101, 242, 0.18);
+  border-color: rgba(88, 101, 242, 0.45);
+  transform: translateY(-1px);
+}
+
 .win-btn.minimize {
   display: flex;
   align-items: center;
@@ -3606,6 +3629,227 @@ html.is-toast, body.is-toast, body.is-toast #root {
 [dir="rtl"] .custom-lang-check {
   margin-left: 0;
   margin-right: auto;
+}
+
+/* ==========================================================================
+   Discord Feedback Modal Styles
+   ========================================================================== */
+
+.feedback-modal-dialog {
+  max-width: 420px;
+  width: 92%;
+  background: var(--bg-card, #12151e);
+  border: 1px solid var(--border);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), 0 0 20px rgba(88, 101, 242, 0.15);
+  border-radius: 12px;
+}
+
+.feedback-modal-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.feedback-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.feedback-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+}
+
+.feedback-cat-pills {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.feedback-cat-btn {
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  transition: all 0.2s ease;
+}
+
+.feedback-cat-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.feedback-cat-btn.bug.active {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.6);
+  color: #fca5a5;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+}
+
+.feedback-cat-btn.feature.active {
+  background: rgba(34, 197, 94, 0.16);
+  border-color: rgba(34, 197, 94, 0.6);
+  color: #86efac;
+  box-shadow: 0 0 10px rgba(34, 197, 94, 0.2);
+}
+
+.feedback-cat-btn.general.active {
+  background: rgba(88, 101, 242, 0.18);
+  border-color: rgba(88, 101, 242, 0.6);
+  color: #a5b4fc;
+  box-shadow: 0 0 10px rgba(88, 101, 242, 0.2);
+}
+
+.feedback-input {
+  width: 100%;
+  padding: 8px 11px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 12px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease;
+}
+
+.feedback-input:focus {
+  border-color: rgba(88, 101, 242, 0.6);
+  box-shadow: 0 0 8px rgba(88, 101, 242, 0.25);
+}
+
+.feedback-identity-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+  opacity: 0.8;
+  padding-left: 2px;
+}
+
+.feedback-textarea {
+  width: 100%;
+  padding: 8px 11px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.45;
+  outline: none;
+  resize: vertical;
+  min-height: 75px;
+  box-sizing: border-box;
+  font-family: inherit;
+  transition: border-color 0.2s ease;
+}
+
+.feedback-textarea:focus {
+  border-color: rgba(88, 101, 242, 0.6);
+  box-shadow: 0 0 8px rgba(88, 101, 242, 0.25);
+}
+
+.feedback-checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.feedback-checkbox-row input[type="checkbox"] {
+  margin-top: 2px;
+  accent-color: #5865f2;
+  cursor: pointer;
+}
+
+.feedback-checkbox-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.feedback-checkbox-desc {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1.35;
+  margin-top: 2px;
+}
+
+.feedback-webhook-expander {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.feedback-webhook-toggle-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.feedback-webhook-toggle-btn:hover {
+  color: #a5b4fc;
+}
+
+.feedback-webhook-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.feedback-webhook-desc {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+.feedback-error-banner {
+  padding: 8px 10px;
+  background: rgba(239, 68, 68, 0.14);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 8px;
+  color: #fca5a5;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.feedback-submit-btn {
+  background: linear-gradient(135deg, #5865f2 0%, #4752c4 100%) !important;
+  color: #fff !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 4px 14px rgba(88, 101, 242, 0.35) !important;
+}
+
+.feedback-submit-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #6875f5 0%, #5865f2 100%) !important;
+  box-shadow: 0 6px 18px rgba(88, 101, 242, 0.5) !important;
+  transform: translateY(-1px);
 }
 
 

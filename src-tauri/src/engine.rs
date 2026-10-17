@@ -78,6 +78,10 @@ pub struct Config {
     #[serde(default)]
     pub process_detection_mode: bool,
 
+    // === Geri Bildirim & Topluluk İletişimi ===
+    #[serde(default)]
+    pub feedback_webhook: String,
+
     // === Yapılandırma ve Varsayılan Sürümü (Tek seferlik geçişler için) ===
     #[serde(default)]
     pub app_defaults_version: u32,
@@ -104,6 +108,7 @@ impl Default for Config {
             auto_healing: true,
             auto_update: true,
             process_detection_mode: false,
+            feedback_webhook: String::new(),
             app_defaults_version: 1,
         }
     }

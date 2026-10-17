@@ -314,6 +314,191 @@ fn is_portable() -> bool {
     is_portable_app()
 }
 
+// === Geri Bildirim & Kullanıcı Kimliği Sistemi ===
+const DEFAULT_FEEDBACK_WEBHOOK: &str = "";
+
+fn get_machine_guid() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+        if let Ok(out) = Command::new("reg")
+            .args(&["query", "HKLM\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            let text = String::from_utf8_lossy(&out.stdout);
+            for line in text.lines() {
+                if line.contains("MachineGuid") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if let Some(guid) = parts.last() {
+                        if guid.len() >= 8 {
+                            return guid.to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    "UNKNOWN-GUID".to_string()
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct SystemIdentity {
+    pub username: String,
+    pub computer_name: String,
+    pub machine_id: String,
+    pub short_machine_id: String,
+    pub os_info: String,
+    pub app_version: String,
+    pub is_portable: bool,
+}
+
+#[tauri::command]
+fn get_system_identity() -> SystemIdentity {
+    let username = std::env::var("USERNAME").unwrap_or_else(|_| "User".to_string());
+    let computer_name = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows-PC".to_string());
+    let guid = get_machine_guid();
+    let short_id = if guid.len() >= 8 {
+        format!("#{}", &guid[..8].to_uppercase())
+    } else {
+        "#00000000".to_string()
+    };
+    let is_portable = is_portable_app();
+    let app_version = env!("CARGO_PKG_VERSION").to_string();
+
+    SystemIdentity {
+        username,
+        computer_name,
+        machine_id: guid,
+        short_machine_id: short_id,
+        os_info: "Windows (x64)".to_string(),
+        app_version,
+        is_portable,
+    }
+}
+
+#[derive(serde::Deserialize, Clone, Debug)]
+pub struct SendFeedbackPayload {
+    pub category: String, // "bug", "feature", "general"
+    pub sender: String,
+    pub message: String,
+    pub attach_sys_info: bool,
+    pub custom_webhook: Option<String>,
+}
+
+#[tauri::command]
+async fn send_discord_feedback(
+    s: State<'_, AppState>,
+    payload: SendFeedbackPayload,
+) -> Result<(), String> {
+    let msg = payload.message.trim();
+    if msg.is_empty() {
+        return Err("Lütfen bir açıklama veya mesaj girin.".to_string());
+    }
+
+    let cfg = Config::load(&s.engine.lock().unwrap().dir);
+
+    let mut webhook_url = payload.custom_webhook.unwrap_or_default().trim().to_string();
+    if webhook_url.is_empty() {
+        webhook_url = cfg.feedback_webhook.trim().to_string();
+    }
+    if webhook_url.is_empty() {
+        webhook_url = DEFAULT_FEEDBACK_WEBHOOK.trim().to_string();
+    }
+
+    if webhook_url.is_empty() || !webhook_url.starts_with("https://discord.com/api/webhooks/") {
+        return Err("Geçerli bir Discord Webhook URL bulunamadı. Lütfen Discord kanalınızın webhook linkini girin.".to_string());
+    }
+
+    let identity = get_system_identity();
+    let engine_active = s.engine.lock().unwrap().is_on();
+    let strategy_id = cfg.strategy.clone().unwrap_or_else(|| "varsayılan".to_string());
+    let isp_id = cfg.isp.clone();
+
+    // Category title and embed color (decimal values)
+    let (cat_title, color) = match payload.category.as_str() {
+        "bug" => ("🐛 Hata Bildirimi", 15548997), // Red #ED4245
+        "feature" => ("💡 Yeni Özellik / Öneri", 5763719), // Green #57F287
+        _ => ("💬 Genel Görüş & Geri Bildirim", 5793266), // Blurple #5865F2
+    };
+
+    let sender_display = if payload.sender.trim().is_empty() {
+        format!("Anonim (Windows: {} @ {})", identity.username, identity.computer_name)
+    } else {
+        format!("{} (Windows: {} @ {})", payload.sender.trim(), identity.username, identity.computer_name)
+    };
+
+    let mut fields = Vec::new();
+    fields.push(json!({
+        "name": "👤 Gönderen",
+        "value": sender_display,
+        "inline": true
+    }));
+
+    if payload.attach_sys_info {
+        fields.push(json!({
+            "name": "🔑 Donanım Kimliği",
+            "value": format!("`{}`", identity.short_machine_id),
+            "inline": true
+        }));
+        fields.push(json!({
+            "name": "🚀 Slipstream Sürümü",
+            "value": format!("v{} ({})", identity.app_version, if identity.is_portable { "Portable" } else { "Setup" }),
+            "inline": true
+        }));
+        fields.push(json!({
+            "name": "🌐 İSS & Strateji",
+            "value": format!("Sağlayıcı: **{}** | Strateji: `{}`\n🛡️ Koruma: **{}**", 
+                isp_id, 
+                strategy_id, 
+                if engine_active { "Devrede 🟢" } else { "Kapalı ⚪" }
+            ),
+            "inline": false
+        }));
+    }
+
+    let embed = json!({
+        "title": format!("[Slipstream] {}", cat_title),
+        "description": msg,
+        "color": color,
+        "fields": fields,
+        "footer": {
+            "text": format!("Slipstream v{} • Kullanıcı Geri Bildirimi", identity.app_version)
+        }
+    });
+
+    let client = reqwest::Client::builder()
+        .user_agent("Slipstream-Feedback/1.0")
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("HTTP istemci hatası: {}", e))?;
+
+    let post_body = json!({
+        "username": "Slipstream Feedback",
+        "embeds": [embed]
+    });
+
+    let json_bytes = serde_json::to_vec(&post_body).map_err(|e| e.to_string())?;
+
+    let resp = client.post(&webhook_url)
+        .header("Content-Type", "application/json")
+        .body(json_bytes)
+        .send()
+        .await
+        .map_err(|e| format!("Discord sunucusuna ulaşılamadı: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err_text = resp.text().await.unwrap_or_default();
+        return Err(format!("Discord Webhook hatası (HTTP {status}): {err_text}"));
+    }
+
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub struct ProcessItem {
     pub pid: u32,
@@ -1955,7 +2140,9 @@ fn main() {
             set_window_expanded,
             refresh_game_priorities,
             is_window_visible,
-            play_sound
+            play_sound,
+            get_system_identity,
+            send_discord_feedback
         ])
         .build(tauri::generate_context!())
         .expect("error while building Slipstream")
@@ -2053,5 +2240,15 @@ mod tests {
         let requested_left = -100;
         let clamped_left = requested_left.clamp(min_x, max_x);
         assert_eq!(clamped_left, 10, "Window X must never be less than min_x bounds");
+    }
+
+    #[test]
+    fn test_system_identity_generation() {
+        let identity = get_system_identity();
+        assert!(!identity.username.is_empty());
+        assert!(!identity.computer_name.is_empty());
+        assert!(!identity.short_machine_id.is_empty());
+        assert!(identity.short_machine_id.starts_with("#"));
+        assert_eq!(identity.app_version, "0.2.2");
     }
 }

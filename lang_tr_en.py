@@ -351,6 +351,26 @@ TR = {
     "suc_ispChanged": lambda isp, strat: f"Sağlayıcı {isp} seçildi. Önerilen strateji ({strat}) uygulandı.",
     "suc_strategyChanged": lambda strat: f"Bypass stratejisi uygulandı: {strat}",
     "suc_discordRestarting": "Discord relay üzerinden temiz şekilde başlatılıyor...",
+
+    # Feedback & Discord Community
+    "feedbackBtnTitle": "Geri Bildirim & Hata Bildir (Discord)",
+    "feedbackModalTitle": "💬 Geri Bildirim & Hata Bildirimi",
+    "feedbackCategoryLabel": "Geri Bildirim Türü",
+    "feedbackCategoryBug": "🐛 Hata",
+    "feedbackCategoryFeature": "💡 Öneri",
+    "feedbackCategoryGeneral": "💬 Genel",
+    "feedbackSenderLabel": "Discord Kullanıcı Adınız / Takma Adınız (İsteğe bağlı)",
+    "feedbackSenderPlaceholder": "örn: @kullanici veya Ahmet",
+    "feedbackMessageLabel": "Açıklama & Mesajınız",
+    "feedbackMessagePlaceholder": "Karşılaştığınız sorunu veya önerinizi detaylıca yazabilirsiniz...",
+    "feedbackAttachSysInfoLabel": "Sistem ve tanı bilgilerini rapora ekle (Önerilir)",
+    "feedbackSysInfoHint": "Anonim donanım kimliği, Windows sürümü, seçili İSS ve bypass modu rapora eklenir.",
+    "feedbackWebhookConfigToggle": "⚙️ Özel Webhook URL Yapılandır",
+    "feedbackWebhookPlaceholder": "https://discord.com/api/webhooks/...",
+    "feedbackSendBtn": "Geri Bildirimi Gönder",
+    "feedbackSendingBtn": "Gönderiliyor...",
+    "feedbackSuccessToast": "Geri bildiriminiz Discord kanalına başarıyla iletildi! Teşekkür ederiz.",
+    "feedbackEmptyMsgErr": "Lütfen bir açıklama veya mesaj girin.",
 }
 
 EN = {
@@ -701,4 +721,24 @@ EN = {
     "suc_ispChanged": lambda isp, strat: f"ISP set to {isp}. Applied recommended strategy ({strat}).",
     "suc_strategyChanged": lambda strat: f"Bypass strategy applied: {strat}",
     "suc_discordRestarting": "Relaunching Discord cleanly through local relay...",
+
+    # Feedback & Discord Community
+    "feedbackBtnTitle": "Send Feedback & Report Issue (Discord)",
+    "feedbackModalTitle": "💬 Feedback & Issue Reporting",
+    "feedbackCategoryLabel": "Feedback Type",
+    "feedbackCategoryBug": "🐛 Bug",
+    "feedbackCategoryFeature": "💡 Feature",
+    "feedbackCategoryGeneral": "💬 General",
+    "feedbackSenderLabel": "Your Discord Username / Nickname (Optional)",
+    "feedbackSenderPlaceholder": "e.g. @username or Alex",
+    "feedbackMessageLabel": "Description & Details",
+    "feedbackMessagePlaceholder": "Describe the issue or share your suggestion in detail...",
+    "feedbackAttachSysInfoLabel": "Include system & diagnostic details (Recommended)",
+    "feedbackSysInfoHint": "Includes anonymous hardware ID, Windows version, selected ISP, and bypass mode.",
+    "feedbackWebhookConfigToggle": "⚙️ Configure Custom Webhook URL",
+    "feedbackWebhookPlaceholder": "https://discord.com/api/webhooks/...",
+    "feedbackSendBtn": "Send Feedback",
+    "feedbackSendingBtn": "Sending...",
+    "feedbackSuccessToast": "Your feedback was successfully sent to the Discord channel! Thank you.",
+    "feedbackEmptyMsgErr": "Please enter a description or message.",
 }

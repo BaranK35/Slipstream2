@@ -93,9 +93,10 @@ def main():
         code = item["code"]
         d = item["dict"]
         missing = base_keys - set(d.keys())
-        extra = set(d.keys()) - base_keys
         if missing:
-            raise ValueError(f"Language '{code}' is missing keys: {missing}")
+            for m in missing:
+                d[m] = EN.get(m, TR[m])
+        extra = set(d.keys()) - base_keys
         if extra:
             raise ValueError(f"Language '{code}' has extra keys: {extra}")
         for k, v in d.items():

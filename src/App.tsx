@@ -49,8 +49,19 @@ type Cfg = {
   auto_healing: boolean;
   auto_update?: boolean;
   process_detection_mode?: boolean;
+  feedback_webhook?: string;
   app_defaults_version?: number;
 };
+
+interface SystemIdentity {
+  username: string;
+  computer_name: string;
+  machine_id: string;
+  short_machine_id: string;
+  os_info: string;
+  app_version: string;
+  is_portable: boolean;
+}
 
 type DomainSuggestionResult = {
   input: string;
@@ -261,6 +272,36 @@ export default function App() {
   const [showEulaModal, setShowEulaModal] = useState(false);
   const [showReleaseNotesModal, setShowReleaseNotesModal] = useState(false);
 
+  // Feedback & Discord Webhook State
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackCategory, setFeedbackCategory] = useState<"bug" | "feature" | "general">("bug");
+  const [feedbackSender, setFeedbackSender] = useState<string>(() => {
+    try {
+      return localStorage.getItem("slipstream_feedback_sender") || "";
+    } catch {
+      return "";
+    }
+  });
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [attachSysInfo, setAttachSysInfo] = useState(true);
+  const [sendingFeedback, setSendingFeedback] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [systemIdentity, setSystemIdentity] = useState<SystemIdentity | null>(null);
+  const [showWebhookConfig, setShowWebhookConfig] = useState(false);
+  const [customWebhookInput, setCustomWebhookInput] = useState("");
+
+  useEffect(() => {
+    if (showFeedbackModal) {
+      invoke<SystemIdentity>("get_system_identity")
+        .then((id) => setSystemIdentity(id))
+        .catch(() => {});
+      if (cfg?.feedback_webhook) {
+        setCustomWebhookInput(cfg.feedback_webhook);
+      }
+      setFeedbackError(null);
+    }
+  }, [showFeedbackModal]);
+
   // Theme & Personalization synchronization
   useEffect(() => {
     try {
@@ -361,6 +402,7 @@ export default function App() {
           auto_healing: loadedCfg.auto_healing ?? true,
           auto_update: loadedCfg.auto_update ?? true,
           process_detection_mode: loadedCfg.process_detection_mode ?? false,
+          feedback_webhook: loadedCfg.feedback_webhook || "",
           app_defaults_version: loadedCfg.app_defaults_version ?? 1,
         };
         setCfg(initialCfg);
@@ -1104,6 +1146,48 @@ export default function App() {
     }
   }
 
+  async function handleSendFeedback() {
+    const trimmedMsg = feedbackMessage.trim();
+    if (!trimmedMsg) {
+      setFeedbackError(t.feedbackEmptyMsgErr);
+      return;
+    }
+    setSendingFeedback(true);
+    setFeedbackError(null);
+
+    if (feedbackSender.trim()) {
+      try {
+        localStorage.setItem("slipstream_feedback_sender", feedbackSender.trim());
+      } catch {}
+    }
+
+    try {
+      const webhookToUse = customWebhookInput.trim() || cfg?.feedback_webhook || undefined;
+      await invoke("send_discord_feedback", {
+        payload: {
+          category: feedbackCategory,
+          sender: feedbackSender.trim(),
+          message: trimmedMsg,
+          attach_sys_info: attachSysInfo,
+          custom_webhook: webhookToUse,
+        },
+      });
+
+      if (customWebhookInput.trim() && customWebhookInput.trim() !== cfg?.feedback_webhook) {
+        patch({ feedback_webhook: customWebhookInput.trim() });
+      }
+
+      setFeedbackMessage("");
+      setShowFeedbackModal(false);
+      if (soundEnabled) playTone("click");
+      setSuccessMsg(t.feedbackSuccessToast);
+    } catch (err: any) {
+      setFeedbackError(typeof err === "string" ? err : String(err));
+    } finally {
+      setSendingFeedback(false);
+    }
+  }
+
   function removeCustomPlatform(id: string) {
     if (!cfg) return;
     patch({
@@ -1188,6 +1272,17 @@ export default function App() {
           {isPortable && <span className="portable-pill" title={t.portableTitle}>{t.portableTag}</span>}
         </div>
         <div className="window-controls">
+          <button
+            type="button"
+            className="win-btn feedback"
+            title={t.feedbackBtnTitle}
+            onClick={() => {
+              if (soundEnabled) playTone("click");
+              setShowFeedbackModal(true);
+            }}
+          >
+            💬
+          </button>
           <button
             className="win-btn minimize"
             title={t.minimizeTitle}
@@ -2771,6 +2866,164 @@ export default function App() {
                 style={{ padding: "8px 16px" }}
               >
                 {updating ? t.downloadingText : t.updateNowBtn2}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Discord Feedback Modal */}
+      {showFeedbackModal && (
+        <div className="modal-backdrop" onClick={() => setShowFeedbackModal(false)}>
+          <div className="modal-dialog feedback-modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 16 }}>💬</span>
+                <h3 className="modal-title">{t.feedbackModalTitle}</h3>
+              </div>
+              <button
+                className="modal-close"
+                onClick={() => {
+                  if (soundEnabled) playTone("click");
+                  setShowFeedbackModal(false);
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="modal-body feedback-modal-body">
+              {/* Category Selector */}
+              <div className="feedback-field">
+                <label className="feedback-label">{t.feedbackCategoryLabel}</label>
+                <div className="feedback-cat-pills">
+                  <button
+                    type="button"
+                    className={`feedback-cat-btn bug ${feedbackCategory === "bug" ? "active" : ""}`}
+                    onClick={() => {
+                      if (soundEnabled) playTone("click");
+                      setFeedbackCategory("bug");
+                    }}
+                  >
+                    {t.feedbackCategoryBug}
+                  </button>
+                  <button
+                    type="button"
+                    className={`feedback-cat-btn feature ${feedbackCategory === "feature" ? "active" : ""}`}
+                    onClick={() => {
+                      if (soundEnabled) playTone("click");
+                      setFeedbackCategory("feature");
+                    }}
+                  >
+                    {t.feedbackCategoryFeature}
+                  </button>
+                  <button
+                    type="button"
+                    className={`feedback-cat-btn general ${feedbackCategory === "general" ? "active" : ""}`}
+                    onClick={() => {
+                      if (soundEnabled) playTone("click");
+                      setFeedbackCategory("general");
+                    }}
+                  >
+                    {t.feedbackCategoryGeneral}
+                  </button>
+                </div>
+              </div>
+
+              {/* Sender Name / Discord Username */}
+              <div className="feedback-field">
+                <label className="feedback-label">{t.feedbackSenderLabel}</label>
+                <input
+                  type="text"
+                  className="feedback-input"
+                  placeholder={t.feedbackSenderPlaceholder}
+                  value={feedbackSender}
+                  onChange={(e) => setFeedbackSender(e.target.value)}
+                />
+                {systemIdentity && (
+                  <div className="feedback-identity-hint">
+                    🖥️ {systemIdentity.username} @ {systemIdentity.computer_name} ({systemIdentity.short_machine_id})
+                  </div>
+                )}
+              </div>
+
+              {/* Message / Description */}
+              <div className="feedback-field">
+                <label className="feedback-label">{t.feedbackMessageLabel}</label>
+                <textarea
+                  className="feedback-textarea"
+                  rows={4}
+                  placeholder={t.feedbackMessagePlaceholder}
+                  value={feedbackMessage}
+                  onChange={(e) => setFeedbackMessage(e.target.value)}
+                />
+              </div>
+
+              {/* Attach Diagnostics Checkbox */}
+              <div className="feedback-checkbox-row" onClick={() => setAttachSysInfo(!attachSysInfo)}>
+                <input
+                  type="checkbox"
+                  checked={attachSysInfo}
+                  onChange={(e) => setAttachSysInfo(e.target.checked)}
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <div>
+                  <div className="feedback-checkbox-label">{t.feedbackAttachSysInfoLabel}</div>
+                  <div className="feedback-checkbox-desc">{t.feedbackSysInfoHint}</div>
+                </div>
+              </div>
+
+              {/* Optional Webhook configuration toggler */}
+              <div className="feedback-webhook-expander">
+                <button
+                  type="button"
+                  className="feedback-webhook-toggle-btn"
+                  onClick={() => setShowWebhookConfig(!showWebhookConfig)}
+                >
+                  {t.feedbackWebhookConfigToggle} {showWebhookConfig ? "▲" : "▼"}
+                </button>
+                {showWebhookConfig && (
+                  <div className="feedback-webhook-input-group">
+                    <input
+                      type="text"
+                      className="feedback-input webhook-url"
+                      placeholder={t.feedbackWebhookPlaceholder}
+                      value={customWebhookInput}
+                      onChange={(e) => setCustomWebhookInput(e.target.value)}
+                    />
+                    <p className="feedback-webhook-desc">
+                      Kendi Discord kanalınızın Webhook URL'sini yapıştırarak doğrudan test edebilirsiniz.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Error Banner */}
+              {feedbackError && (
+                <div className="feedback-error-banner">
+                  ⚠️ {feedbackError}
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => {
+                  if (soundEnabled) playTone("click");
+                  setShowFeedbackModal(false);
+                }}
+              >
+                {t.closeBtn}
+              </button>
+              <button
+                type="button"
+                className="primary-btn feedback-submit-btn"
+                onClick={handleSendFeedback}
+                disabled={sendingFeedback}
+              >
+                {sendingFeedback ? t.feedbackSendingBtn : t.feedbackSendBtn}
               </button>
             </div>
           </div>
