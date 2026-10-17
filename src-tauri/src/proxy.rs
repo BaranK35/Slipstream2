@@ -444,10 +444,12 @@ pub fn restart_discord() {
     crate::dns::flush();
 
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        let update_exe = PathBuf::from(&local).join("Discord").join("Update.exe");
+        let discord_dir = PathBuf::from(&local).join("Discord");
+        let update_exe = discord_dir.join("Update.exe");
         if update_exe.exists() {
-            let _ = Command::new(update_exe)
+            let _ = Command::new(&update_exe)
                 .args(["--processStart", "Discord.exe"])
+                .current_dir(&discord_dir)
                 .creation_flags(0x0800_0000)
                 .spawn();
         }
