@@ -1356,7 +1356,6 @@ export default function App() {
           <div className={`status-indicator ${busy ? "busy" : on ? "active" : "inactive"}`} />
           <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
           <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.2.1")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
-          {isPortable && <span className="portable-pill" title={t.portableTitle}>{t.portableTag}</span>}
         </div>
         <div className="window-controls">
           <button
