@@ -731,6 +731,28 @@ Section Install
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
 
+  ; Clean up any legacy or stale autostart entries from older or portable versions
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Slipstream-Portable"
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "slipstream"
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "SlipstreamDPI"
+  DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "Slipstream"
+  DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "Slipstream-Portable"
+  DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "slipstream"
+  DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "SlipstreamDPI"
+  SetShellVarContext current
+  Delete "$SMSTARTUP\Slipstream.lnk"
+  Delete "$SMSTARTUP\Slipstream-Portable.lnk"
+  Delete "$SMSTARTUP\slipstream.lnk"
+
+  ; If autostart was previously enabled, redirect the registry key to point to the newly installed binary
+  ClearErrors
+  ReadRegStr $R0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+  ${IfNot} ${Errors}
+    ${If} $R0 != ""
+      WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --minimized'
+    ${EndIf}
+  ${EndIf}
+
   ; Auto close this page for passive mode
   ${If} $PassiveMode = 1
     SetAutoClose true
@@ -840,12 +862,29 @@ Section Uninstall
     DeleteRegKey HKCU "${UNINSTKEY}"
   !endif
 
-  ; Removes the Autostart entry for ${PRODUCTNAME} from the HKCU Run key if it exists.
-  ; This ensures the program does not launch automatically after uninstallation if it exists.
-  ; If it doesn't exist, it does nothing.
-  ; We do this when not updating (to preserve the registry value on updates)
+  ; Removes all Autostart entries and shortcuts for ${PRODUCTNAME} and legacy variants
+  ; This ensures the program does not launch automatically after uninstallation.
   ${If} $UpdateMode <> 1
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Slipstream"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Slipstream-Portable"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "slipstream"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "SlipstreamDPI"
+    DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
+    DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "Slipstream"
+    DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "Slipstream-Portable"
+    DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "slipstream"
+    DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "SlipstreamDPI"
+
+    SetShellVarContext current
+    Delete "$SMSTARTUP\Slipstream.lnk"
+    Delete "$SMSTARTUP\Slipstream-Portable.lnk"
+    Delete "$SMSTARTUP\slipstream.lnk"
+    SetShellVarContext all
+    Delete "$SMSTARTUP\Slipstream.lnk"
+    Delete "$SMSTARTUP\Slipstream-Portable.lnk"
+    Delete "$SMSTARTUP\slipstream.lnk"
+    SetShellVarContext current
   ${EndIf}
 
   ; Delete app data if the checkbox is selected

@@ -169,12 +169,52 @@ impl Config {
     }
 }
 
+/// Returns the canonical path to Slipstream executable.
+/// If an installed Setup version exists at %LOCALAPPDATA%\Slipstream\slipstream.exe,
+/// that permanent path is always prioritized over ephemeral portable locations.
+pub fn get_canonical_app_exe() -> String {
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        let installed_exe = std::path::Path::new(&local).join("Slipstream").join("slipstream.exe");
+        if installed_exe.exists() {
+            return installed_exe.to_string_lossy().to_string();
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        return exe.to_string_lossy().to_string();
+    }
+    "slipstream.exe".to_string()
+}
+
+/// Helper function to parse executable path out of a Windows command line string.
+pub fn extract_exe_path_from_cmd(cmd: &str) -> String {
+    let parts: Vec<&str> = cmd.split("REG_SZ").collect();
+    let val_part = parts.get(1).unwrap_or(&cmd).trim();
+    if val_part.starts_with('"') {
+        if let Some(end) = val_part[1..].find('"') {
+            return val_part[1..1 + end].to_string();
+        }
+    }
+    val_part.split_whitespace().next().unwrap_or(val_part).to_string()
+}
+
 /// Registers or unregisters Slipstream in Windows HKCU Run key for boot startup.
 pub fn set_windows_autostart(enable: bool) -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let exe_str = exe.to_string_lossy();
+    // Purge legacy conflicting keys first
+    for legacy_key in &["Slipstream-Portable", "slipstream", "SlipstreamDPI"] {
+        let _ = Command::new("reg.exe")
+            .args([
+                "delete",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v",
+                legacy_key,
+                "/f",
+            ])
+            .creation_flags(0x0800_0000)
+            .output();
+    }
 
     if enable {
+        let exe_str = get_canonical_app_exe();
         let cmd_val = format!("\"{exe_str}\" --minimized");
         let status = Command::new("reg.exe")
             .args([
@@ -210,7 +250,79 @@ pub fn set_windows_autostart(enable: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Checks if Windows autostart is active in HKCU.
+/// Inspects Windows startup configuration, cleans up legacy/conflicting entries,
+/// and heals any stale or broken paths that point to deleted or moved executables.
+pub fn repair_and_sync_autostart(auto_start_pc: bool) {
+    // 1. Purge legacy conflicting registry keys
+    for legacy_key in &["Slipstream-Portable", "slipstream", "SlipstreamDPI"] {
+        let _ = Command::new("reg.exe")
+            .args([
+                "delete",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v",
+                legacy_key,
+                "/f",
+            ])
+            .creation_flags(0x0800_0000)
+            .output();
+    }
+
+    // 2. Clean up any stale shortcuts in the Windows Startup folder
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let startup_dir = std::path::Path::new(&appdata)
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs")
+            .join("Startup");
+
+        for name in &["Slipstream.lnk", "Slipstream-Portable.lnk", "slipstream.lnk"] {
+            let lnk = startup_dir.join(name);
+            if lnk.exists() {
+                let _ = std::fs::remove_file(lnk);
+            }
+        }
+    }
+
+    // 3. Inspect existing HKCU Run\Slipstream entry
+    let query_out = Command::new("reg.exe")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+            "/v",
+            "Slipstream",
+        ])
+        .creation_flags(0x0800_0000)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    let canonical_exe = get_canonical_app_exe();
+
+    if auto_start_pc {
+        if query_out.contains("Slipstream") {
+            let is_target_valid = if let Some(line) = query_out.lines().find(|l| l.contains("Slipstream")) {
+                let path_str = extract_exe_path_from_cmd(line);
+                std::path::Path::new(&path_str).exists()
+            } else {
+                false
+            };
+
+            // If target exe was deleted/moved or doesn't match canonical path, heal it immediately!
+            if !is_target_valid || !query_out.to_lowercase().contains(&canonical_exe.to_lowercase()) {
+                let _ = set_windows_autostart(true);
+            }
+        } else {
+            let _ = set_windows_autostart(true);
+        }
+    } else {
+        if query_out.contains("Slipstream") {
+            let _ = set_windows_autostart(false);
+        }
+    }
+}
+
+/// Checks if Windows autostart is active in HKCU and points to a valid existing executable.
 pub fn is_windows_autostart() -> bool {
     let out = Command::new("reg.exe")
         .args([
@@ -224,7 +336,16 @@ pub fn is_windows_autostart() -> bool {
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
 
-    out.contains("Slipstream")
+    if !out.contains("Slipstream") {
+        return false;
+    }
+
+    if let Some(line) = out.lines().find(|l| l.contains("Slipstream")) {
+        let path_str = extract_exe_path_from_cmd(line);
+        std::path::Path::new(&path_str).exists()
+    } else {
+        false
+    }
 }
 
 /// Applies or reverts Windows TCP/IP registry and network stack tweaks for low latency gaming.
@@ -790,6 +911,18 @@ mod tests {
         let serialized = serde_json::to_string(&cfg).expect("Serialization should succeed");
         assert!(serialized.contains("\"gaming_mode\":true"));
         assert!(serialized.contains("\"game_priority_boost\":true"));
+    }
+
+    #[test]
+    fn test_extract_exe_path_from_cmd() {
+        let quoted = r#"    Slipstream    REG_SZ    "C:\Program Files\Slipstream\slipstream.exe" --minimized"#;
+        assert_eq!(extract_exe_path_from_cmd(quoted), r#"C:\Program Files\Slipstream\slipstream.exe"#);
+
+        let unquoted = r#"    Slipstream    REG_SZ    C:\Slipstream\slipstream.exe --minimized"#;
+        assert_eq!(extract_exe_path_from_cmd(unquoted), r#"C:\Slipstream\slipstream.exe"#);
+
+        let raw_quoted = r#""C:\Users\User\Downloads\Slipstream-Portable.exe" --minimized"#;
+        assert_eq!(extract_exe_path_from_cmd(raw_quoted), r#"C:\Users\User\Downloads\Slipstream-Portable.exe"#);
     }
 }
 

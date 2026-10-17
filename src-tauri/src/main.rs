@@ -2155,10 +2155,8 @@ fn main() {
             HIDE_ON_BLUR.store(boot_cfg.hide_on_blur, Ordering::SeqCst);
             MINIMIZE_TO_TRAY.store(boot_cfg.minimize_to_tray, Ordering::SeqCst);
 
-            // Ensure Windows startup registry path points to current executable location (e.g. if portable was moved)
-            if boot_cfg.auto_start_pc {
-                let _ = engine::set_windows_autostart(true);
-            }
+            // Ensure Windows startup registry is repaired, healed and synchronized with current/canonical executable
+            engine::repair_and_sync_autostart(boot_cfg.auto_start_pc);
 
             // Ensure system proxy is completely clean on startup
             proxy::clean_stale_proxy();
@@ -2341,7 +2339,7 @@ fn main() {
                     // Show animated background notification in bottom-right
                     let app_handle = app.handle().clone();
                     tauri::async_runtime::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(900)).await;
+                        tokio::time::sleep(Duration::from_millis(1200)).await;
                         show_toast_notification(app_handle, None);
                     });
                 } else {
