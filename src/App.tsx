@@ -551,6 +551,26 @@ export default function App() {
     };
   }, [on, isWindowVisible]);
 
+  // Discord diagnosis polling - periodically refreshes status when viewing preferences
+  useEffect(() => {
+    if (!isWindowVisible || activeTab !== "preferences") return;
+    let active = true;
+    const pollDiag = async () => {
+      try {
+        const diag = await invoke<DiscordDiagnosis>("diagnose_discord");
+        if (active) setDiscordDiag(diag);
+      } catch {
+        // silent
+      }
+    };
+    pollDiag();
+    const interval = setInterval(pollDiag, 1500);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [activeTab, isWindowVisible]);
+
   useEffect(() => {
     if (showLog && logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: "smooth" });
@@ -836,12 +856,18 @@ export default function App() {
     try {
       await invoke("repair_discord");
       setSuccessMsg(t.suc_discordRepaired);
-      const diag = await invoke<DiscordDiagnosis>("diagnose_discord");
-      setDiscordDiag(diag);
+      // Fast polling after repair to immediately catch the spawned Discord process
+      for (let i = 0; i < 6; i++) {
+        const diag = await invoke<DiscordDiagnosis>("diagnose_discord");
+        setDiscordDiag(diag);
+        if (diag.running) break;
+        await new Promise((r) => setTimeout(r, 500));
+      }
     } catch (e) {
       setErr(t.err_discordFailed(String(e)));
+    } finally {
+      setRepairingDiscord(false);
     }
-    setRepairingDiscord(false);
   }
 
   async function handleRunHealthCheck() {

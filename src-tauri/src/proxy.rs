@@ -83,6 +83,15 @@ pub async fn resolve_doh_with_provider(host: &str, provider: &str) -> Result<Ipv
         return Ok(ip);
     }
 
+    // Fast path: if the host is a known Discord domain, return the verified Cloudflare Anycast IP immediately in 0ms!
+    for &(dom, ip_str) in crate::dns::DISCORD_HOST_MAP {
+        if clean_host == dom {
+            if let Ok(ip) = ip_str.parse::<Ipv4Addr>() {
+                return Ok(ip);
+            }
+        }
+    }
+
     // Check memory cache
     {
         let cache = get_dns_cache().lock().unwrap();
@@ -320,22 +329,11 @@ fn rewrite_discord_urls(text: &str, port: u16) -> String {
 
 /// Checks if Discord.exe or Update.exe is currently running.
 pub fn is_discord_running() -> bool {
-    let out = Command::new("tasklist")
-        .args(["/FI", "IMAGENAME eq Discord.exe", "/NH", "/FO", "CSV"])
-        .creation_flags(0x0800_0000)
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
-        .unwrap_or_default();
-    if out.contains("discord.exe") {
-        return true;
-    }
-    let out_up = Command::new("tasklist")
-        .args(["/FI", "IMAGENAME eq Update.exe", "/NH", "/FO", "CSV"])
-        .creation_flags(0x0800_0000)
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
-        .unwrap_or_default();
-    out_up.contains("update.exe")
+    let procs = crate::get_running_process_names();
+    procs.iter().any(|p| {
+        let l = p.to_lowercase();
+        l.contains("discord.exe") || l.contains("update.exe") || l == "discord"
+    })
 }
 
 /// Checks if general internet connectivity is functional.
@@ -436,7 +434,14 @@ pub fn restart_discord() {
         .creation_flags(0x0800_0000)
         .output();
 
-    std::thread::sleep(Duration::from_millis(500));
+    for _ in 0..12 {
+        if !is_discord_running() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    crate::dns::flush();
 
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
         let update_exe = PathBuf::from(&local).join("Discord").join("Update.exe");

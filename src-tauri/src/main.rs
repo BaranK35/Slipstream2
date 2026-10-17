@@ -589,7 +589,7 @@ fn get_running_processes() -> Vec<ProcessItem> {
     vec![]
 }
 
-fn get_running_process_names() -> Vec<String> {
+pub fn get_running_process_names() -> Vec<String> {
     get_running_processes().into_iter().map(|p| p.name).collect()
 }
 
