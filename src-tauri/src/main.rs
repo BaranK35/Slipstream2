@@ -2573,7 +2573,7 @@ mod tests {
         assert!(!identity.computer_name.is_empty());
         assert!(!identity.short_machine_id.is_empty());
         assert!(identity.short_machine_id.starts_with("#"));
-        assert_eq!(identity.app_version, "0.2.4");
+        assert_eq!(identity.app_version, env!("CARGO_PKG_VERSION"));
     }
 
     #[test]

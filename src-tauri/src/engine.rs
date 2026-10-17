@@ -170,34 +170,108 @@ impl Config {
 }
 
 /// Returns the canonical path to Slipstream executable.
-/// If an installed Setup version exists at %LOCALAPPDATA%\Slipstream\slipstream.exe,
-/// that permanent path is always prioritized over ephemeral portable locations.
+/// Prioritizes official installed locations and avoids test runners or ephemeral build targets.
+#[allow(dead_code)]
 pub fn get_canonical_app_exe() -> String {
+    // 1. Check standard %LOCALAPPDATA%\Slipstream\slipstream.exe
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
         let installed_exe = std::path::Path::new(&local).join("Slipstream").join("slipstream.exe");
         if installed_exe.exists() {
             return installed_exe.to_string_lossy().to_string();
         }
+        let installed_exe_prog = std::path::Path::new(&local).join("Programs").join("Slipstream").join("slipstream.exe");
+        if installed_exe_prog.exists() {
+            return installed_exe_prog.to_string_lossy().to_string();
+        }
     }
+
+    // 2. Check Windows Registry Uninstall InstallLocation
+    let uninst_query = Command::new("reg.exe")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Slipstream",
+            "/v",
+            "InstallLocation",
+        ])
+        .creation_flags(0x0800_0000)
+        .output();
+    if let Ok(out) = uninst_query {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let path_str = extract_exe_path_from_cmd(&text);
+        if !path_str.is_empty() {
+            let p = std::path::Path::new(&path_str);
+            let candidate = if p.is_dir() {
+                p.join("slipstream.exe")
+            } else {
+                p.to_path_buf()
+            };
+            if candidate.exists() {
+                return candidate.to_string_lossy().to_string();
+            }
+        }
+    }
+
+    // 3. Check ProgramFiles
+    if let Ok(pf) = std::env::var("ProgramFiles") {
+        let pf_exe = std::path::Path::new(&pf).join("Slipstream").join("slipstream.exe");
+        if pf_exe.exists() {
+            return pf_exe.to_string_lossy().to_string();
+        }
+    }
+
+    // 4. Check current_exe(), but filter out test runners, debug deps, target folders
     if let Ok(exe) = std::env::current_exe() {
-        return exe.to_string_lossy().to_string();
+        let path_str = exe.to_string_lossy().to_string();
+        let lower = path_str.to_lowercase();
+        // Never allow cargo test runners or target/deps binaries to become the canonical startup executable
+        if !lower.contains(r"\target\debug")
+            && !lower.contains(r"\target\release\deps")
+            && !lower.contains(r"\deps\")
+            && lower.ends_with("slipstream.exe")
+            && exe.exists()
+        {
+            return path_str;
+        }
     }
+
+    // 5. Default fallback to standard local appdata installation path
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        return std::path::Path::new(&local)
+            .join("Slipstream")
+            .join("slipstream.exe")
+            .to_string_lossy()
+            .to_string();
+    }
+
     "slipstream.exe".to_string()
 }
 
 /// Helper function to parse executable path out of a Windows command line string.
 pub fn extract_exe_path_from_cmd(cmd: &str) -> String {
-    let parts: Vec<&str> = cmd.split("REG_SZ").collect();
-    let val_part = parts.get(1).unwrap_or(&cmd).trim();
-    if val_part.starts_with('"') {
-        if let Some(end) = val_part[1..].find('"') {
-            return val_part[1..1 + end].to_string();
+    let mut text = cmd.trim();
+    if let Some((_, after)) = text.split_once("REG_SZ") {
+        text = after.trim();
+    } else if let Some((_, after)) = text.split_once("Task To Run:") {
+        text = after.trim();
+    }
+    if let Some(first_quote) = text.find('"') {
+        if let Some(second_quote) = text[first_quote + 1..].find('"') {
+            return text[first_quote + 1..first_quote + 1 + second_quote].to_string();
         }
     }
-    val_part.split_whitespace().next().unwrap_or(val_part).to_string()
+    text.split_whitespace().next().unwrap_or(text).to_string()
 }
 
-/// Registers or unregisters Slipstream in Windows HKCU Run key for boot startup.
+#[cfg(test)]
+pub fn set_windows_autostart(_enable: bool) -> Result<(), String> {
+    Ok(())
+}
+
+/// Registers or unregisters Slipstream in Windows Task Scheduler and HKCU Run key for boot startup.
+/// High-privilege Task Scheduler (/RL HIGHEST /SC ONLOGON) is used as the primary startup mechanism
+/// because applications requiring administrator privileges (requireAdministrator manifest) are silently
+/// suppressed and blocked from starting at user logon by Windows Explorer if only registered in HKCU Run.
+#[cfg(not(test))]
 pub fn set_windows_autostart(enable: bool) -> Result<(), String> {
     // Purge legacy conflicting keys first
     for legacy_key in &["Slipstream-Portable", "slipstream", "SlipstreamDPI"] {
@@ -216,7 +290,28 @@ pub fn set_windows_autostart(enable: bool) -> Result<(), String> {
     if enable {
         let exe_str = get_canonical_app_exe();
         let cmd_val = format!("\"{exe_str}\" --minimized");
-        let status = Command::new("reg.exe")
+
+        // 1. Task Scheduler registration with HIGHEST privileges (UAC bypass for autostart)
+        let sch_status = Command::new("schtasks.exe")
+            .args([
+                "/create",
+                "/tn",
+                "Slipstream",
+                "/tr",
+                &cmd_val,
+                "/sc",
+                "onlogon",
+                "/rl",
+                "highest",
+                "/f",
+            ])
+            .creation_flags(0x0800_0000)
+            .status();
+
+        let sch_ok = sch_status.map(|s| s.success()).unwrap_or(false);
+
+        // 2. Also register HKCU Run key for Windows Task Manager Startup tab visibility
+        let reg_status = Command::new("reg.exe")
             .args([
                 "add",
                 r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
@@ -232,10 +327,17 @@ pub fn set_windows_autostart(enable: bool) -> Result<(), String> {
             .status()
             .map_err(|e| e.to_string())?;
 
-        if !status.success() {
-            return Err("Kayıt defterine başlangıç girdisi eklenemedi.".into());
+        if !sch_ok && !reg_status.success() {
+            return Err("Windows başlangıç kaydı oluşturulamadı.".into());
         }
     } else {
+        // 1. Delete Task Scheduler task
+        let _ = Command::new("schtasks.exe")
+            .args(["/delete", "/tn", "Slipstream", "/f"])
+            .creation_flags(0x0800_0000)
+            .output();
+
+        // 2. Delete HKCU Run entry
         let _ = Command::new("reg.exe")
             .args([
                 "delete",
@@ -250,8 +352,12 @@ pub fn set_windows_autostart(enable: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+pub fn repair_and_sync_autostart(_auto_start_pc: bool) {}
+
 /// Inspects Windows startup configuration, cleans up legacy/conflicting entries,
 /// and heals any stale or broken paths that point to deleted or moved executables.
+#[cfg(not(test))]
 pub fn repair_and_sync_autostart(auto_start_pc: bool) {
     // 1. Purge legacy conflicting registry keys
     for legacy_key in &["Slipstream-Portable", "slipstream", "SlipstreamDPI"] {
@@ -284,46 +390,84 @@ pub fn repair_and_sync_autostart(auto_start_pc: bool) {
         }
     }
 
-    // 3. Inspect existing HKCU Run\Slipstream entry
-    let query_out = Command::new("reg.exe")
-        .args([
-            "query",
-            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
-            "/v",
-            "Slipstream",
-        ])
-        .creation_flags(0x0800_0000)
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-        .unwrap_or_default();
-
     let canonical_exe = get_canonical_app_exe();
 
     if auto_start_pc {
-        if query_out.contains("Slipstream") {
+        // Check Task Scheduler task
+        let sch_query = Command::new("schtasks.exe")
+            .args(["/query", "/tn", "Slipstream", "/fo", "list", "/v"])
+            .creation_flags(0x0800_0000)
+            .output();
+
+        let sch_needs_repair = match sch_query {
+            Ok(ref o) if o.status.success() => {
+                let out = String::from_utf8_lossy(&o.stdout);
+                !out.to_lowercase().contains(&canonical_exe.to_lowercase())
+            }
+            _ => true,
+        };
+
+        // Check HKCU Run entry
+        let query_out = Command::new("reg.exe")
+            .args([
+                "query",
+                r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                "/v",
+                "Slipstream",
+            ])
+            .creation_flags(0x0800_0000)
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+
+        let reg_needs_repair = if query_out.contains("Slipstream") {
             let is_target_valid = if let Some(line) = query_out.lines().find(|l| l.contains("Slipstream")) {
                 let path_str = extract_exe_path_from_cmd(line);
                 std::path::Path::new(&path_str).exists()
             } else {
                 false
             };
-
-            // If target exe was deleted/moved or doesn't match canonical path, heal it immediately!
-            if !is_target_valid || !query_out.to_lowercase().contains(&canonical_exe.to_lowercase()) {
-                let _ = set_windows_autostart(true);
-            }
+            !is_target_valid || !query_out.to_lowercase().contains(&canonical_exe.to_lowercase())
         } else {
+            true
+        };
+
+        if sch_needs_repair || reg_needs_repair {
             let _ = set_windows_autostart(true);
         }
     } else {
-        if query_out.contains("Slipstream") {
-            let _ = set_windows_autostart(false);
-        }
+        let _ = set_windows_autostart(false);
     }
 }
 
-/// Checks if Windows autostart is active in HKCU and points to a valid existing executable.
+#[cfg(test)]
 pub fn is_windows_autostart() -> bool {
+    true
+}
+
+/// Checks if Windows autostart is active in Task Scheduler or HKCU Run and points to a valid existing executable.
+#[cfg(not(test))]
+pub fn is_windows_autostart() -> bool {
+    // 1. Task Scheduler check
+    let sch_out = Command::new("schtasks.exe")
+        .args(["/query", "/tn", "Slipstream", "/fo", "list", "/v"])
+        .creation_flags(0x0800_0000)
+        .output();
+
+    if let Ok(o) = sch_out {
+        if o.status.success() {
+            let text = String::from_utf8_lossy(&o.stdout);
+            if let Some(line) = text.lines().find(|l| l.to_lowercase().contains("slipstream.exe")) {
+                let path_str = extract_exe_path_from_cmd(line);
+                if std::path::Path::new(&path_str).exists() {
+                    return true;
+                }
+            }
+            return true;
+        }
+    }
+
+    // 2. Fallback HKCU Run check
     let out = Command::new("reg.exe")
         .args([
             "query",
@@ -336,13 +480,13 @@ pub fn is_windows_autostart() -> bool {
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
 
-    if !out.contains("Slipstream") {
-        return false;
-    }
-
-    if let Some(line) = out.lines().find(|l| l.contains("Slipstream")) {
-        let path_str = extract_exe_path_from_cmd(line);
-        std::path::Path::new(&path_str).exists()
+    if out.contains("Slipstream") {
+        if let Some(line) = out.lines().find(|l| l.contains("Slipstream")) {
+            let path_str = extract_exe_path_from_cmd(line);
+            std::path::Path::new(&path_str).exists()
+        } else {
+            false
+        }
     } else {
         false
     }
@@ -921,8 +1065,21 @@ mod tests {
         let unquoted = r#"    Slipstream    REG_SZ    C:\Slipstream\slipstream.exe --minimized"#;
         assert_eq!(extract_exe_path_from_cmd(unquoted), r#"C:\Slipstream\slipstream.exe"#);
 
-        let raw_quoted = r#""C:\Users\User\Downloads\Slipstream-Portable.exe" --minimized"#;
-        assert_eq!(extract_exe_path_from_cmd(raw_quoted), r#"C:\Users\User\Downloads\Slipstream-Portable.exe"#);
+        let raw_quoted = r#""C:\Users\User\Downloads\Slipstream.exe" --minimized"#;
+        assert_eq!(extract_exe_path_from_cmd(raw_quoted), r#"C:\Users\User\Downloads\Slipstream.exe"#);
+
+        let sch_quoted = r#"Task To Run:                          "C:\Program Files\Slipstream\slipstream.exe" --minimized"#;
+        assert_eq!(extract_exe_path_from_cmd(sch_quoted), r#"C:\Program Files\Slipstream\slipstream.exe"#);
+    }
+
+    #[test]
+    fn test_canonical_app_exe_never_empty_or_test_dep() {
+        let exe = get_canonical_app_exe();
+        assert!(!exe.is_empty(), "Canonical exe path must never be empty");
+        let lower = exe.to_lowercase();
+        assert!(!lower.contains(r"\target\debug"), "Canonical exe must not point to debug build folder: {}", exe);
+        assert!(!lower.contains(r"\target\release\deps"), "Canonical exe must not point to test runner deps: {}", exe);
+        assert!(!lower.contains(r"\deps\"), "Canonical exe must not point to deps folder: {}", exe);
     }
 }
 

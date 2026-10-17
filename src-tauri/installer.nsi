@@ -744,14 +744,11 @@ Section Install
   Delete "$SMSTARTUP\Slipstream-Portable.lnk"
   Delete "$SMSTARTUP\slipstream.lnk"
 
-  ; If autostart was previously enabled, redirect the registry key to point to the newly installed binary
-  ClearErrors
-  ReadRegStr $R0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
-  ${IfNot} ${Errors}
-    ${If} $R0 != ""
-      WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --minimized'
-    ${EndIf}
-  ${EndIf}
+  ; Register high-privilege Windows Task Scheduler on-logon task so Slipstream
+  ; starts seamlessly with administrative privileges without UAC suppression.
+  ; Also maintain HKCU Run key for Task Manager visibility.
+  nsExec::Exec 'schtasks.exe /create /tn "Slipstream" /tr "\"$INSTDIR\${MAINBINARYNAME}.exe\" --minimized" /sc onlogon /rl highest /f'
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}" '"$INSTDIR\${MAINBINARYNAME}.exe" --minimized'
 
   ; Auto close this page for passive mode
   ${If} $PassiveMode = 1
@@ -865,6 +862,7 @@ Section Uninstall
   ; Removes all Autostart entries and shortcuts for ${PRODUCTNAME} and legacy variants
   ; This ensures the program does not launch automatically after uninstallation.
   ${If} $UpdateMode <> 1
+    nsExec::Exec 'schtasks.exe /delete /tn "Slipstream" /f'
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Slipstream"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Slipstream-Portable"

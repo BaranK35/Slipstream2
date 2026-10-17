@@ -1,5 +1,5 @@
 {
-  "version": "0.2.4",
-  "notes": "v0.2.4 Güncellemesi:\n- Windows başlangıç (Autostart) kayıt defteri ve eski sürüm çakışmaları tamamen giderildi; ölü/taşınmış yollar için otomatik onarım ve temizleme eklendi.\n- Kurulumlu sürümün kaldırılması (Uninstall) durumunda başlangıç kayıtları ve kısayolları eksiksiz temizleniyor.\n- Kurulumlu (Setup) sürümde yanlışlıkla gösterilen 'Portable' rozeti hatası düzeltildi.\n- Otomatik gizlenen Windows görev çubuğu ve farklı ekran çözünürlükleri (DPI) için akıllı pencere kalibrasyonu kararlı hale getirildi.\n- Canlı Discord Ses (Frankfurt RTC) sunucusu gecikme göstergesi ve ağ bağlantı durumu geliştirildi.",
-  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.4/Slipstream_0.2.4_x64-setup.exe"
+  "version": "0.2.5",
+  "notes": "v0.2.5 Güncellemesi:\n- Windows başlangıç (Autostart) mekanizması Windows Görev Zamanlayıcısı (Task Scheduler) ile en yüksek yönetici ayrıcalıklarıyla (Highest Privileges) çalışacak şekilde baştan aşağı yenilendi; bilgisayar açılışında UAC takılması ve Windows Explorer engeli tamamen çözüldü.\n- Geliştirici ve test ortamlarının Windows başlangıç kayıt defterini geçici dosya yollarıyla kirletmesi kalıcı olarak engellendi.\n- Uygulama kaldırıldığında (Uninstall) başlangıç görevleri ve kayıtları eksiksiz temizleniyor.\n- Oyun esnasında sessiz arka plan güncellemeleri ve kapatılabilir güncelleme başarı bildirimi optimize edildi.",
+  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.5/Slipstream_0.2.5_x64-setup.exe"
 }
