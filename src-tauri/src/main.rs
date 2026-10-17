@@ -565,16 +565,22 @@ fn is_portable_app() -> bool {
             return true;
         }
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            let install_dir = std::path::Path::new(&local).join("Programs").join("Slipstream");
-            let install_dir_str = install_dir.to_string_lossy().to_lowercase();
-            if !exe_str.starts_with(&install_dir_str)
-                && !exe_str.contains("program files")
-                && !exe_str.contains("target\\debug")
-                && !exe_str.contains("target\\release")
+            let local_lower = local.to_lowercase();
+            let install_dir1 = std::path::Path::new(&local_lower).join("slipstream");
+            let install_dir2 = std::path::Path::new(&local_lower).join("programs").join("slipstream");
+            let dir1_str = install_dir1.to_string_lossy().to_lowercase();
+            let dir2_str = install_dir2.to_string_lossy().to_lowercase();
+
+            if exe_str.starts_with(&dir1_str)
+                || exe_str.starts_with(&dir2_str)
+                || exe_str.contains("program files")
+                || exe_str.contains("target\\debug")
+                || exe_str.contains("target\\release")
             {
-                return true;
+                return false;
             }
         }
+        return true;
     }
     false
 }
@@ -2557,7 +2563,7 @@ mod tests {
         assert!(!identity.computer_name.is_empty());
         assert!(!identity.short_machine_id.is_empty());
         assert!(identity.short_machine_id.starts_with("#"));
-        assert_eq!(identity.app_version, "0.2.2");
+        assert_eq!(identity.app_version, "0.2.3");
     }
 
     #[test]
@@ -2592,5 +2598,23 @@ mod tests {
         assert!(target_logical_h >= 440.0, "Window height must not fall below min logical height");
         let win_phys_h = (target_logical_h * scale).round() as i32;
         assert!(win_phys_h + margin_y * 2 + extra_bottom <= work_area_h, "Window + margins + taskbar clearance must fit in screen");
+    }
+
+    #[test]
+    fn test_is_portable_detection_rules() {
+        let portable_name = "C:\\Users\\User\\Downloads\\Slipstream-Portable.exe".to_lowercase();
+        let installed_setup_path = "C:\\Users\\User\\AppData\\Local\\Slipstream\\slipstream.exe".to_lowercase();
+        let local_app_data = "C:\\Users\\User\\AppData\\Local".to_lowercase();
+
+        let dir1 = format!("{}\\slipstream", local_app_data);
+        let dir2 = format!("{}\\programs\\slipstream", local_app_data);
+
+        // Portable exe filename must be recognized as portable
+        assert!(portable_name.contains("portable"));
+
+        // Setup installed path in AppData\Local\Slipstream must NOT be considered portable
+        assert!(installed_setup_path.starts_with(&dir1));
+        assert!(!portable_name.starts_with(&dir1));
+        assert!(!portable_name.starts_with(&dir2));
     }
 }

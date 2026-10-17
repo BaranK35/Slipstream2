@@ -1,5 +1,5 @@
 {
-  "version": "0.2.2",
-  "notes": "v0.2.2 Güncellemesi:\n- Otomatik gizlenen Windows görev çubuğu ve farklı ekran çözünürlükleri (DPI) için dinamik kalibrasyon.\n- Canlı Discord Ses (Frankfurt RTC) sunucusu gecikme göstergesi ve ağ durumu.\n- Kurulumda ve uygulamada varsayılan dil İngilizce yapıldı, özel dil seçici eklendi.\n- Süreç algılama ayar açıklaması ve arayüz hizalaması iyileştirildi.",
-  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.2/Slipstream_0.2.2_x64-setup.exe"
+  "version": "0.2.3",
+  "notes": "v0.2.3 Güncellemesi:\n- Kurulumlu (Setup) sürümde yanlışlıkla gösterilen 'Portable' rozeti hatası düzeltildi.\n- Otomatik gizlenen Windows görev çubuğu ve farklı ekran çözünürlükleri (DPI) için akıllı pencere kalibrasyonu kararlı hale getirildi.\n- Canlı Discord Ses (Frankfurt RTC) sunucusu gecikme göstergesi ve ağ bağlantı durumu geliştirildi.\n- Canlı süreç algılayıcı arayüz hizalaması ve ayar açıklamaları iyileştirildi.",
+  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.3/Slipstream_0.2.3_x64-setup.exe"
 }
