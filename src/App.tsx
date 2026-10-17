@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import "./styles.css";
 import logoSvg from "./assets/logo.svg";
 import { translations, LANGUAGES, type LangCode } from "./translations";
+import { getReleaseHighlights } from "./releaseNotes";
 
 type CustomPlatform = {
   id: string;
@@ -1439,15 +1440,13 @@ export default function App() {
                     ? (updating ? t.autoUpdatingText : t.autoBgUpdatingText)
                     : t.manualUpdateText}
                 </span>
-                {updateInfo.release_notes && (
-                  <button
-                    type="button"
-                    className="update-details-link-btn"
-                    onClick={() => setShowReleaseNotesModal(true)}
-                  >
-                    {t.detailsLink}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="update-details-link-btn"
+                  onClick={() => setShowReleaseNotesModal(true)}
+                >
+                  {t.detailsLink}
+                </button>
               </div>
             </div>
             {!cfg?.auto_update ? (
@@ -2942,49 +2941,81 @@ export default function App() {
       )}
 
       {/* Release Notes Modal */}
-      {showReleaseNotesModal && updateInfo && (
+      {showReleaseNotesModal && (
         <div className="modal-backdrop" onClick={() => setShowReleaseNotesModal(false)}>
           <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
             <div className="modal-header">
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 16 }}>🚀</span>
-                <h3 className="modal-title">{t.releaseNotesTitle(updateInfo.latest_version)}</h3>
+                <h3 className="modal-title">
+                  {t.releaseNotesTitle(
+                    justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.2.7"
+                  )}
+                </h3>
               </div>
               <button className="modal-close" onClick={() => setShowReleaseNotesModal(false)}>✕</button>
             </div>
             <div className="modal-body" style={{ maxHeight: "320px", overflowY: "auto", padding: "14px 16px" }}>
               <div className="release-notes-list">
-                {updateInfo.release_notes.split("\n").map((line, idx) => {
-                  const trimmed = line.trim();
-                  if (!trimmed) return <div key={idx} style={{ height: 6 }} />;
-                  if (trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*")) {
-                    return (
-                      <div key={idx} className="release-note-item" style={{ display: "flex", gap: 8, marginBottom: 8, fontSize: 12.5, lineHeight: 1.45, color: "var(--text-main)" }}>
-                        <span style={{ color: "#10b981", fontWeight: "bold" }}>•</span>
-                        <span>{trimmed.replace(/^[-•*]\s*/, "")}</span>
-                      </div>
-                    );
+                {(() => {
+                  const targetVer = justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.2.7";
+                  const notesText = updateInfo?.release_notes?.trim();
+
+                  if (notesText && notesText.length > 0) {
+                    return notesText.split("\n").map((line, idx) => {
+                      const trimmed = line.trim();
+                      if (!trimmed) return <div key={idx} style={{ height: 6 }} />;
+                      if (trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*")) {
+                        return (
+                          <div key={idx} className="release-note-item" style={{ display: "flex", gap: 8, marginBottom: 8, fontSize: 12.5, lineHeight: 1.45, color: "var(--text-main)" }}>
+                            <span style={{ color: "#10b981", fontWeight: "bold" }}>•</span>
+                            <span>{trimmed.replace(/^[-•*]\s*/, "")}</span>
+                          </div>
+                        );
+                      }
+                      if (trimmed.startsWith("###") || trimmed.startsWith("##") || trimmed.endsWith(":")) {
+                        return (
+                          <div key={idx} style={{ fontWeight: 700, fontSize: 13, color: "var(--primary-color, #10b981)", marginTop: idx > 0 ? 10 : 0, marginBottom: 6 }}>
+                            {trimmed.replace(/^#+\s*/, "")}
+                          </div>
+                        );
+                      }
+                      return (
+                        <p key={idx} style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 8, lineHeight: 1.4 }}>
+                          {trimmed}
+                        </p>
+                      );
+                    });
                   }
-                  if (trimmed.startsWith("###") || trimmed.startsWith("##") || trimmed.endsWith(":")) {
-                    return (
-                      <div key={idx} style={{ fontWeight: 700, fontSize: 13, color: "var(--primary-color, #10b981)", marginTop: idx > 0 ? 10 : 0, marginBottom: 6 }}>
-                        {trimmed.replace(/^#+\s*/, "")}
-                      </div>
-                    );
-                  }
-                  return (
-                    <p key={idx} style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 8, lineHeight: 1.4 }}>
-                      {trimmed}
-                    </p>
-                  );
-                })}
+
+                  // Fallback to built-in highlights
+                  const fallbackList = getReleaseHighlights(targetVer, lang);
+                  return fallbackList.map((item, idx) => (
+                    <div key={idx} className="release-note-item" style={{ display: "flex", gap: 8, marginBottom: 8, fontSize: 12.5, lineHeight: 1.45, color: "var(--text-main)" }}>
+                      <span style={{ color: "#10b981", fontWeight: "bold" }}>•</span>
+                      <span>{item}</span>
+                    </div>
+                  ));
+                })()}
               </div>
             </div>
             <div className="modal-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 10 }}>
-              <button className="secondary-btn" onClick={() => setShowReleaseNotesModal(false)}>
-                {t.closeBtn2}
-              </button>
-              {updateInfo.has_update && !cfg?.auto_update && (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button className="secondary-btn" onClick={() => setShowReleaseNotesModal(false)}>
+                  {t.closeBtn2}
+                </button>
+                <button
+                  className="secondary-btn"
+                  onClick={() => {
+                    invoke("open_url", { url: "https://github.com/BaranK35/Slipstream2/releases" }).catch(() => {});
+                  }}
+                  style={{ fontSize: 11, opacity: 0.85, padding: "6px 10px" }}
+                  title="GitHub Releases"
+                >
+                  GitHub ↗
+                </button>
+              </div>
+              {updateInfo?.has_update && !cfg?.auto_update && (
                 <button
                   className="primary-btn"
                   onClick={() => {

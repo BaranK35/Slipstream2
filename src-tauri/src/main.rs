@@ -1442,6 +1442,8 @@ async fn check_for_updates() -> UpdateInfo {
         format!("https://github.com/BaranK35/Slipstreamtest2/raw/main/version.json?t={now_ts}"),
     ];
 
+    let mut fallback_notes = String::new();
+
     for u in version_urls {
         if let Ok(resp) = client
             .get(&u)
@@ -1457,6 +1459,9 @@ async fn check_for_updates() -> UpdateInfo {
                             let has = is_newer_version(latest, &current_version);
                             let notes = json.get("notes").and_then(|v| v.as_str()).unwrap_or("Hata düzeltmeleri ve performans iyileştirmeleri.");
                             let url = json.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                            if fallback_notes.is_empty() && !notes.trim().is_empty() {
+                                fallback_notes = notes.to_string();
+                            }
                             if has {
                                 let mut valid_asset = false;
                                 if !url.is_empty() {
@@ -1487,7 +1492,7 @@ async fn check_for_updates() -> UpdateInfo {
                                         has_update: false,
                                         current_version: current_version.clone(),
                                         latest_version: current_version,
-                                        release_notes: "".into(),
+                                        release_notes: fallback_notes,
                                         download_url: "".into(),
                                     };
                                 }
@@ -1519,6 +1524,9 @@ async fn check_for_updates() -> UpdateInfo {
                             let latest = tag.trim_start_matches('v').to_string();
                             let has = is_newer_version(&latest, &current_version);
                             let notes = json.get("body").and_then(|v| v.as_str()).unwrap_or("Yeni sürüm GitHub üzerinde yayınlandı.");
+                            if fallback_notes.is_empty() && !notes.trim().is_empty() {
+                                fallback_notes = notes.to_string();
+                            }
                             let mut dl_url = String::new();
                             let mut asset_ready = false;
                             if let Some(assets) = json.get("assets").and_then(|a| a.as_array()) {
@@ -1557,7 +1565,7 @@ async fn check_for_updates() -> UpdateInfo {
         has_update: false,
         current_version: current_version.clone(),
         latest_version: current_version,
-        release_notes: "".into(),
+        release_notes: fallback_notes,
         download_url: "".into(),
     }
 }
