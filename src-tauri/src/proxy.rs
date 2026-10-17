@@ -776,17 +776,16 @@ pub async fn diagnose_discord() -> DiscordDiagnosis {
     }
 }
 
-/// Completely repairs Discord by patching NEW_UPDATE_ENDPOINT, flushing DNS, and cleanly relaunching.
-#[allow(dead_code)]
+/// Completely repairs Discord by patching NEW_UPDATE_ENDPOINT to the relay, flushing DNS, and cleanly relaunching.
 pub fn repair_discord() -> Result<(), String> {
-    // 1. Clean any broken or stale NEW_UPDATE_ENDPOINT relay settings
-    patch_discord_settings(None);
+    // 1. Ensure Discord settings are patched with the relay URL
+    patch_discord_settings(Some(&format!("http://127.0.0.1:{}/", DISCORD_RELAY_PORT)));
 
-    // 2. Terminate any hung Discord or Update processes and restart cleanly
-    restart_discord();
-
-    // 3. Flush DNS
+    // 2. Flush DNS
     flush_dns_cache();
+
+    // 3. Restart Discord cleanly
+    restart_discord();
 
     Ok(())
 }

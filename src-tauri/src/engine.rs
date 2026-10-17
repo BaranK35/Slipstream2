@@ -446,12 +446,21 @@ impl Engine {
         self.child.is_some()
     }
 
-    /// Ensures the Discord settings remain clean and free of stale local proxy endpoints.
-    pub fn ensure_relay(&mut self, _enabled: bool) {
-        if let Some(s) = self.relay_stop.take() {
-            s.store(true, Ordering::Relaxed);
+    /// Ensures the Discord updater relay is running if enabled, or stopped if not.
+    pub fn ensure_relay(&mut self, enabled: bool) {
+        if enabled {
+            if self.relay_stop.is_none() {
+                let r_stop = Arc::new(AtomicBool::new(false));
+                self.relay_stop = Some(r_stop.clone());
+                tauri::async_runtime::spawn(proxy::run_discord_relay(r_stop, proxy::DISCORD_RELAY_PORT));
+            }
+            proxy::patch_discord_settings(Some(&format!("http://127.0.0.1:{}/", proxy::DISCORD_RELAY_PORT)));
+        } else {
+            if let Some(s) = self.relay_stop.take() {
+                s.store(true, Ordering::Relaxed);
+            }
+            proxy::patch_discord_settings(None);
         }
-        proxy::patch_discord_settings(None);
     }
 
     /// Starts (or re-applies) everything. On error, stops cleanly.
