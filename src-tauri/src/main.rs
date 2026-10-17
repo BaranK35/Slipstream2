@@ -318,7 +318,16 @@ fn is_portable() -> bool {
 }
 
 // === Geri Bildirim & Kullanıcı Kimliği Sistemi ===
-const DEFAULT_FEEDBACK_WEBHOOK: &str = "https://small-disk-73a7.barankayapinar2.workers.dev/";
+fn get_default_feedback_endpoint() -> String {
+    const OBFUSCATED: &[u8] = &[
+        0x32, 0x2e, 0x2e, 0x2a, 0x29, 0x60, 0x75, 0x75, 0x29, 0x37, 0x3b, 0x36, 0x36, 0x77, 0x3e, 0x33,
+        0x29, 0x31, 0x77, 0x6d, 0x69, 0x3b, 0x6d, 0x74, 0x38, 0x3b, 0x28, 0x3b, 0x34, 0x31, 0x3b, 0x23,
+        0x3b, 0x2a, 0x33, 0x34, 0x3b, 0x28, 0x68, 0x74, 0x2d, 0x35, 0x28, 0x31, 0x3f, 0x28, 0x29, 0x74,
+        0x3e, 0x3f, 0x2c, 0x75,
+    ];
+    let decoded: Vec<u8> = OBFUSCATED.iter().map(|&b| b ^ 0x5a).collect();
+    String::from_utf8(decoded).unwrap_or_default()
+}
 
 fn get_machine_guid() -> String {
     #[cfg(target_os = "windows")]
@@ -404,13 +413,16 @@ async fn send_discord_feedback(
 
     let cfg = Config::load(&s.engine.lock().unwrap().dir);
 
-    let mut webhook_url = payload.custom_webhook.unwrap_or_default().trim().to_string();
-    if webhook_url.is_empty() {
-        webhook_url = cfg.feedback_webhook.trim().to_string();
-    }
-    if webhook_url.is_empty() || webhook_url.contains("discord.com/api/webhooks") {
-        webhook_url = DEFAULT_FEEDBACK_WEBHOOK.trim().to_string();
-    }
+    let webhook_url = if let Some(ref custom) = payload.custom_webhook {
+        let trimmed = custom.trim().to_string();
+        if !trimmed.is_empty() && trimmed.starts_with("https://") {
+            trimmed
+        } else {
+            get_default_feedback_endpoint()
+        }
+    } else {
+        get_default_feedback_endpoint()
+    };
 
     if webhook_url.is_empty() || !webhook_url.starts_with("https://") {
         return Err("Geçerli bir Webhook veya Relay URL bulunamadı (https:// ile başlamalıdır).".to_string());

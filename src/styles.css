@@ -2175,16 +2175,19 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   font-size: 11px;
 }
 .diag-label {
   color: var(--text-muted);
+  white-space: nowrap;
 }
 .diag-val {
   font-weight: 600;
   display: flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
 }
 .diag-val.ok {
   color: var(--cyan);

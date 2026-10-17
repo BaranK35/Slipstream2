@@ -287,17 +287,12 @@ export default function App() {
   const [sendingFeedback, setSendingFeedback] = useState(false);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [systemIdentity, setSystemIdentity] = useState<SystemIdentity | null>(null);
-  const [showWebhookConfig, setShowWebhookConfig] = useState(false);
-  const [customWebhookInput, setCustomWebhookInput] = useState("");
 
   useEffect(() => {
     if (showFeedbackModal) {
       invoke<SystemIdentity>("get_system_identity")
         .then((id) => setSystemIdentity(id))
         .catch(() => {});
-      if (cfg?.feedback_webhook) {
-        setCustomWebhookInput(cfg.feedback_webhook);
-      }
       setFeedbackError(null);
     }
   }, [showFeedbackModal]);
@@ -1188,20 +1183,15 @@ export default function App() {
     }
 
     try {
-      const webhookToUse = customWebhookInput.trim() || cfg?.feedback_webhook || undefined;
       await invoke("send_discord_feedback", {
         payload: {
           category: feedbackCategory,
           sender: feedbackSender.trim(),
           message: trimmedMsg,
           attach_sys_info: attachSysInfo,
-          custom_webhook: webhookToUse,
+          custom_webhook: null,
         },
       });
-
-      if (customWebhookInput.trim() && customWebhookInput.trim() !== cfg?.feedback_webhook) {
-        patch({ feedback_webhook: customWebhookInput.trim() });
-      }
 
       setFeedbackMessage("");
       setShowFeedbackModal(false);
@@ -2997,31 +2987,6 @@ export default function App() {
                   <div className="feedback-checkbox-label">{t.feedbackAttachSysInfoLabel}</div>
                   <div className="feedback-checkbox-desc">{t.feedbackSysInfoHint}</div>
                 </div>
-              </div>
-
-              {/* Optional Webhook configuration toggler */}
-              <div className="feedback-webhook-expander">
-                <button
-                  type="button"
-                  className="feedback-webhook-toggle-btn"
-                  onClick={() => setShowWebhookConfig(!showWebhookConfig)}
-                >
-                  {t.feedbackWebhookConfigToggle} {showWebhookConfig ? "▲" : "▼"}
-                </button>
-                {showWebhookConfig && (
-                  <div className="feedback-webhook-input-group">
-                    <input
-                      type="text"
-                      className="feedback-input webhook-url"
-                      placeholder={t.feedbackWebhookPlaceholder}
-                      value={customWebhookInput}
-                      onChange={(e) => setCustomWebhookInput(e.target.value)}
-                    />
-                    <p className="feedback-webhook-desc">
-                      Kendi Discord kanalınızın Webhook URL'sini yapıştırarak doğrudan test edebilirsiniz.
-                    </p>
-                  </div>
-                )}
               </div>
 
               {/* Error Banner */}
