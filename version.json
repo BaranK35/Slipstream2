@@ -1,5 +1,5 @@
 {
-  "version": "0.2.3",
-  "notes": "v0.2.3 Güncellemesi:\n- Windows başlangıç (Autostart) kayıt defteri ve eski sürüm çakışmaları tamamen giderildi; ölü/taşınmış yollar için otomatik onarım ve temizleme eklendi.\n- Kurulumlu sürümün kaldırılması (Uninstall) durumunda başlangıç kayıtları ve kısayolları eksiksiz temizleniyor.\n- Kurulumlu (Setup) sürümde yanlışlıkla gösterilen 'Portable' rozeti hatası düzeltildi.\n- Otomatik gizlenen Windows görev çubuğu ve farklı ekran çözünürlükleri (DPI) için akıllı pencere kalibrasyonu kararlı hale getirildi.\n- Canlı Discord Ses (Frankfurt RTC) sunucusu gecikme göstergesi ve ağ bağlantı durumu geliştirildi.",
-  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.3/Slipstream_0.2.3_x64-setup.exe"
+  "version": "0.2.4",
+  "notes": "v0.2.4 Güncellemesi:\n- Windows başlangıç (Autostart) kayıt defteri ve eski sürüm çakışmaları tamamen giderildi; ölü/taşınmış yollar için otomatik onarım ve temizleme eklendi.\n- Kurulumlu sürümün kaldırılması (Uninstall) durumunda başlangıç kayıtları ve kısayolları eksiksiz temizleniyor.\n- Kurulumlu (Setup) sürümde yanlışlıkla gösterilen 'Portable' rozeti hatası düzeltildi.\n- Otomatik gizlenen Windows görev çubuğu ve farklı ekran çözünürlükleri (DPI) için akıllı pencere kalibrasyonu kararlı hale getirildi.\n- Canlı Discord Ses (Frankfurt RTC) sunucusu gecikme göstergesi ve ağ bağlantı durumu geliştirildi.",
+  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.4/Slipstream_0.2.4_x64-setup.exe"
 }

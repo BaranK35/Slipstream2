@@ -2529,6 +2529,8 @@ mod tests {
         assert!(is_newer_version("v0.2.0", "v0.1.9"));
         assert!(is_newer_version("0.2.1", "0.2.0"));
         assert!(is_newer_version("v0.2.1", "v0.2.0"));
+        assert!(is_newer_version("0.2.4", "0.2.3"));
+        assert!(is_newer_version("v0.2.4", "v0.2.3"));
         assert!(!is_newer_version("0.2.0", "0.2.1"));
         assert!(!is_newer_version("0.2.1", "0.2.1"));
     }
@@ -2561,7 +2563,7 @@ mod tests {
         assert!(!identity.computer_name.is_empty());
         assert!(!identity.short_machine_id.is_empty());
         assert!(identity.short_machine_id.starts_with("#"));
-        assert_eq!(identity.app_version, "0.2.3");
+        assert_eq!(identity.app_version, "0.2.4");
     }
 
     #[test]
