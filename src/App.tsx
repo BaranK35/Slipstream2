@@ -1940,8 +1940,8 @@ export default function App() {
                 {/* Canlı Oyun & Uygulama Algılayıcı */}
                 <div className="pref-section-title">{t.liveDetectionSectionTitle}</div>
                 <div className="pref-card">
-                  <div className="pref-row">
-                    <div className="pref-meta">
+                  <div className="pref-row" style={{ alignItems: "flex-start" }}>
+                    <div className="pref-meta" style={{ flex: 1 }}>
                       <div className="pref-badge-row">
                         <span className="pref-name">{t.processDetectionLabel}</span>
                       </div>
@@ -1954,6 +1954,7 @@ export default function App() {
                     </div>
                     <div
                       className={`switch ${cfg.process_detection_mode ? "checked" : ""}`}
+                      style={{ flexShrink: 0, marginTop: 1 }}
                       onClick={() => {
                         if (soundEnabled) playTone("toggle");
                         patch({ process_detection_mode: !cfg.process_detection_mode });

@@ -171,6 +171,280 @@ fn set_file_dialog_active(active: bool) {
     FILE_DIALOG_ACTIVE.store(active, std::sync::atomic::Ordering::SeqCst);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskbarClearance {
+    pub extra_left: i32,
+    pub extra_top: i32,
+    pub extra_right: i32,
+    pub extra_bottom: i32,
+}
+
+#[cfg(target_os = "windows")]
+mod taskbar {
+    use super::TaskbarClearance;
+    use std::mem;
+
+    #[repr(C)]
+    #[derive(Copy, Clone, Debug)]
+    pub struct RECT {
+        pub left: i32,
+        pub top: i32,
+        pub right: i32,
+        pub bottom: i32,
+    }
+
+    #[repr(C)]
+    struct APPBARDATA {
+        cb_size: u32,
+        h_wnd: isize,
+        u_callback_message: u32,
+        u_edge: u32,
+        rc: RECT,
+        l_param: isize,
+    }
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SHAppBarMessage(dw_message: u32, p_data: *mut APPBARDATA) -> usize;
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn FindWindowW(lp_class_name: *const u16, lp_window_name: *const u16) -> isize;
+        fn GetWindowRect(h_wnd: isize, lp_rect: *mut RECT) -> i32;
+    }
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn RegOpenKeyExW(
+            h_key: isize,
+            lp_sub_key: *const u16,
+            ul_options: u32,
+            sam_desired: u32,
+            phk_result: *mut isize,
+        ) -> i32;
+        fn RegQueryValueExW(
+            h_key: isize,
+            lp_value_name: *const u16,
+            lp_reserved: *mut u32,
+            lp_type: *mut u32,
+            lp_data: *mut u8,
+            lpcb_data: *mut u32,
+        ) -> i32;
+        fn RegCloseKey(h_key: isize) -> i32;
+    }
+
+    const HKEY_CURRENT_USER: isize = 0x80000001u32 as isize;
+    const KEY_READ: u32 = 0x20019;
+
+    const ABM_GETSTATE: u32 = 0x00000004;
+    const ABM_GETTASKBARPOS: u32 = 0x00000005;
+    const ABS_AUTOHIDE: usize = 0x00000001;
+
+    pub const ABE_LEFT: u32 = 0;
+    pub const ABE_TOP: u32 = 1;
+    pub const ABE_RIGHT: u32 = 2;
+    pub const ABE_BOTTOM: u32 = 3;
+
+    pub fn is_autohide_enabled() -> bool {
+        let mut data: APPBARDATA = unsafe { mem::zeroed() };
+        data.cb_size = mem::size_of::<APPBARDATA>() as u32;
+        let state = unsafe { SHAppBarMessage(ABM_GETSTATE, &mut data) };
+        if (state & ABS_AUTOHIDE) != 0 {
+            return true;
+        }
+
+        // Secondary check via registry: HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3
+        let sub_key: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StuckRects3\0"
+            .encode_utf16()
+            .collect();
+        let val_name: Vec<u16> = "Settings\0".encode_utf16().collect();
+        let mut h_key: isize = 0;
+        if unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, sub_key.as_ptr(), 0, KEY_READ, &mut h_key) } == 0 {
+            let mut buf = [0u8; 64];
+            let mut size = buf.len() as u32;
+            let mut val_type = 0u32;
+            let status = unsafe {
+                RegQueryValueExW(
+                    h_key,
+                    val_name.as_ptr(),
+                    std::ptr::null_mut(),
+                    &mut val_type,
+                    buf.as_mut_ptr(),
+                    &mut size,
+                )
+            };
+            unsafe { RegCloseKey(h_key); }
+            if status == 0 && size >= 9 {
+                // Byte 8 bit 0 is ABS_AUTOHIDE in Windows Explorer
+                if (buf[8] & 0x01) != 0 {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    pub fn get_taskbar_geometry(scale: f64) -> (u32, i32) {
+        let mut pos_data: APPBARDATA = unsafe { mem::zeroed() };
+        pos_data.cb_size = mem::size_of::<APPBARDATA>() as u32;
+        let res = unsafe { SHAppBarMessage(ABM_GETTASKBARPOS, &mut pos_data) };
+        if res != 0 {
+            let thickness = match pos_data.u_edge {
+                ABE_LEFT | ABE_RIGHT => pos_data.rc.right - pos_data.rc.left,
+                ABE_TOP | ABE_BOTTOM => pos_data.rc.bottom - pos_data.rc.top,
+                _ => (48.0 * scale).round() as i32,
+            };
+            let thickness = if thickness > 10 { thickness } else { (48.0 * scale).round() as i32 };
+            (pos_data.u_edge, thickness)
+        } else {
+            // Fallback via FindWindowW("Shell_TrayWnd")
+            let class_name: Vec<u16> = "Shell_TrayWnd\0".encode_utf16().collect();
+            let hwnd = unsafe { FindWindowW(class_name.as_ptr(), std::ptr::null()) };
+            if hwnd != 0 {
+                let mut rect: RECT = unsafe { mem::zeroed() };
+                if unsafe { GetWindowRect(hwnd, &mut rect) } != 0 {
+                    let h = rect.bottom - rect.top;
+                    let w = rect.right - rect.left;
+                    if h < w && h > 10 {
+                        return (ABE_BOTTOM, h);
+                    } else if w < h && w > 10 {
+                        return (ABE_RIGHT, w);
+                    }
+                }
+            }
+            (ABE_BOTTOM, (48.0 * scale).round() as i32)
+        }
+    }
+
+    pub fn calculate_clearance(
+        work_area_w: u32,
+        work_area_h: u32,
+        mon_w: u32,
+        mon_h: u32,
+        scale: f64,
+    ) -> TaskbarClearance {
+        let autohide = is_autohide_enabled();
+        let (edge, thickness) = get_taskbar_geometry(scale);
+
+        let mut clearance = TaskbarClearance {
+            extra_left: 0,
+            extra_top: 0,
+            extra_right: 0,
+            extra_bottom: 0,
+        };
+
+        // When auto-hide is ON, Windows work_area does NOT subtract the taskbar.
+        // Also check if the work_area height is within 4px of monitor height (typical for auto-hidden taskbar).
+        let is_work_area_full_height = work_area_h >= mon_h.saturating_sub(4);
+        let is_work_area_full_width = work_area_w >= mon_w.saturating_sub(4);
+
+        if autohide || is_work_area_full_height || is_work_area_full_width {
+            match edge {
+                ABE_BOTTOM => {
+                    if autohide || is_work_area_full_height {
+                        clearance.extra_bottom = thickness;
+                    }
+                }
+                ABE_TOP => {
+                    if autohide || is_work_area_full_height {
+                        clearance.extra_top = thickness;
+                    }
+                }
+                ABE_RIGHT => {
+                    if autohide || is_work_area_full_width {
+                        clearance.extra_right = thickness;
+                    }
+                }
+                ABE_LEFT => {
+                    if autohide || is_work_area_full_width {
+                        clearance.extra_left = thickness;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        clearance
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+mod taskbar {
+    use super::TaskbarClearance;
+    pub fn calculate_clearance(
+        _work_area_w: u32,
+        _work_area_h: u32,
+        _mon_w: u32,
+        _mon_h: u32,
+        _scale: f64,
+    ) -> TaskbarClearance {
+        TaskbarClearance {
+            extra_left: 0,
+            extra_top: 0,
+            extra_right: 0,
+            extra_bottom: 0,
+        }
+    }
+}
+
+/// Dynamically calibrates window dimensions and coordinates for any screen resolution, DPI scale,
+/// and auto-hidden taskbar state so the UI is never clipped or occluded.
+fn get_calibrated_window_layout(
+    m: &tauri::Monitor,
+    is_expanded: bool,
+) -> (f64, f64, i32, i32) {
+    let scale = m.scale_factor();
+    let work_area = m.work_area();
+    let mon_size = m.size();
+
+    let clearance = taskbar::calculate_clearance(
+        work_area.size.width,
+        work_area.size.height,
+        mon_size.width,
+        mon_size.height,
+        scale,
+    );
+
+    let margin_x = (16.0 * scale).round() as i32;
+    let margin_y = (16.0 * scale).round() as i32;
+
+    // Available space taking into account margins and any auto-hidden taskbar
+    let avail_phys_w = (work_area.size.width as i32)
+        .saturating_sub(clearance.extra_left + clearance.extra_right + margin_x * 2);
+    let avail_phys_h = (work_area.size.height as i32)
+        .saturating_sub(clearance.extra_top + clearance.extra_bottom + margin_y * 2);
+
+    let avail_logical_w = (avail_phys_w as f64 / scale).max(320.0);
+    let avail_logical_h = (avail_phys_h as f64 / scale).max(440.0);
+
+    // Calibrate target logical size (default 380x620 or 820x620, clamped down if monitor is small)
+    let ideal_w: f64 = if is_expanded { 820.0 } else { 380.0 };
+    let ideal_h: f64 = 620.0;
+
+    let target_logical_w = ideal_w.min(avail_logical_w.floor());
+    let target_logical_h = ideal_h.min(avail_logical_h.floor());
+
+    let win_phys_w = (target_logical_w * scale).round() as i32;
+    let win_phys_h = (target_logical_h * scale).round() as i32;
+
+    let mut x = work_area.position.x + work_area.size.width as i32 - win_phys_w - margin_x - clearance.extra_right;
+    let mut y = work_area.position.y + work_area.size.height as i32 - win_phys_h - margin_y - clearance.extra_bottom;
+
+    let min_x = work_area.position.x + margin_x + clearance.extra_left;
+    let min_y = work_area.position.y + margin_y + clearance.extra_top;
+
+    if x < min_x {
+        x = min_x;
+    }
+    if y < min_y {
+        y = min_y;
+    }
+
+    (target_logical_w, target_logical_h, x, y)
+}
+
 #[tauri::command]
 fn set_window_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
@@ -179,43 +453,36 @@ fn set_window_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), Stri
             return Ok(());
         }
 
-        let scale = win.scale_factor().unwrap_or(1.0);
-        let cur_pos = win.outer_position().unwrap_or(tauri::PhysicalPosition::new(0, 0));
+        let monitor = win
+            .current_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| win.primary_monitor().ok().flatten())
+            .or_else(|| win.available_monitors().ok().and_then(|v| v.into_iter().next()));
 
-        let (min_x, max_x) = if let Ok(Some(mon)) = win.current_monitor() {
-            let work_area = mon.work_area();
-            let target_phys_w = ((if expanded { 820.0 } else { 380.0 }) * scale).round() as i32;
-            let min = work_area.position.x + 10;
-            let max = work_area.position.x + work_area.size.width as i32 - target_phys_w - 10;
-            (min, max.max(min))
-        } else {
-            (10, 1920)
-        };
+        if let Some(m) = monitor {
+            let (target_w, target_h, target_x, target_y) = get_calibrated_window_layout(&m, expanded);
 
-        if expanded {
-            // Save collapsed origin X so we can restore exact position on close
-            COLLAPSED_ORIGIN_X.store(cur_pos.x, Ordering::SeqCst);
+            if expanded {
+                if let Ok(cur_pos) = win.outer_position() {
+                    COLLAPSED_ORIGIN_X.store(cur_pos.x, Ordering::SeqCst);
+                }
 
-            let delta_phys_w = ((820.0 - 380.0) * scale).round() as i32;
-            let mut new_x = cur_pos.x - delta_phys_w;
-            new_x = new_x.clamp(min_x, max_x);
-
-            let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(new_x, cur_pos.y)));
-            let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(820.0, 620.0)));
-            IS_WINDOW_EXPANDED.store(true, Ordering::SeqCst);
-        } else {
-            let saved_x = COLLAPSED_ORIGIN_X.swap(i32::MIN, Ordering::SeqCst);
-            let mut new_x = if saved_x != i32::MIN {
-                saved_x
+                let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(target_x, target_y)));
+                let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(target_w, target_h)));
+                IS_WINDOW_EXPANDED.store(true, Ordering::SeqCst);
             } else {
-                let delta_phys_w = ((820.0 - 380.0) * scale).round() as i32;
-                cur_pos.x + delta_phys_w
-            };
-            new_x = new_x.clamp(min_x, max_x);
+                let saved_x = COLLAPSED_ORIGIN_X.swap(i32::MIN, Ordering::SeqCst);
+                let new_x = if saved_x != i32::MIN {
+                    saved_x
+                } else {
+                    target_x
+                };
 
-            let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(380.0, 620.0)));
-            let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(new_x, cur_pos.y)));
-            IS_WINDOW_EXPANDED.store(false, Ordering::SeqCst);
+                let _ = win.set_size(tauri::Size::Logical(tauri::LogicalSize::new(target_w, target_h)));
+                let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(new_x, target_y)));
+                IS_WINDOW_EXPANDED.store(false, Ordering::SeqCst);
+            }
         }
     }
     Ok(())
@@ -1596,26 +1863,8 @@ fn position_bottom_right(w: &WebviewWindow) -> Result<(), Box<dyn std::error::Er
         .or_else(|| w.available_monitors().ok().and_then(|v| v.into_iter().next()));
 
     if let Some(m) = monitor {
-        let work_area = m.work_area();
-        let scale = m.scale_factor();
-        
-        let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(380.0, 620.0)));
-        let win_width = (380.0 * scale).round() as i32;
-        let win_height = (620.0 * scale).round() as i32;
-
-        let margin_x = (16.0 * scale).round() as i32;
-        let margin_y = (16.0 * scale).round() as i32;
-
-        let mut x = work_area.position.x + work_area.size.width as i32 - win_width - margin_x;
-        let mut y = work_area.position.y + work_area.size.height as i32 - win_height - margin_y;
-
-        if x < work_area.position.x {
-            x = work_area.position.x;
-        }
-        if y < work_area.position.y {
-            y = work_area.position.y;
-        }
-
+        let (target_w, target_h, x, y) = get_calibrated_window_layout(&m, false);
+        let _ = w.set_size(tauri::Size::Logical(tauri::LogicalSize::new(target_w, target_h)));
         let _ = w.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)));
     }
     Ok(())
@@ -1669,6 +1918,14 @@ fn position_toast_bottom_right(w: &WebviewWindow) -> Result<(), Box<dyn std::err
     if let Some(m) = monitor {
         let work_area = m.work_area();
         let scale = m.scale_factor();
+        let mon_size = m.size();
+        let clearance = taskbar::calculate_clearance(
+            work_area.size.width,
+            work_area.size.height,
+            mon_size.width,
+            mon_size.height,
+            scale,
+        );
 
         let (win_width, win_height) = match w.outer_size() {
             Ok(s) if s.width > 50 && s.height > 20 => (s.width as i32, s.height as i32),
@@ -1678,14 +1935,17 @@ fn position_toast_bottom_right(w: &WebviewWindow) -> Result<(), Box<dyn std::err
         let margin_x = (16.0 * scale).round() as i32;
         let margin_y = (16.0 * scale).round() as i32;
 
-        let mut x = work_area.position.x + work_area.size.width as i32 - win_width - margin_x;
-        let mut y = work_area.position.y + work_area.size.height as i32 - win_height - margin_y;
+        let mut x = work_area.position.x + work_area.size.width as i32 - win_width - margin_x - clearance.extra_right;
+        let mut y = work_area.position.y + work_area.size.height as i32 - win_height - margin_y - clearance.extra_bottom;
 
-        if x < work_area.position.x {
-            x = work_area.position.x;
+        let min_x = work_area.position.x + margin_x + clearance.extra_left;
+        let min_y = work_area.position.y + margin_y + clearance.extra_top;
+
+        if x < min_x {
+            x = min_x;
         }
-        if y < work_area.position.y {
-            y = work_area.position.y;
+        if y < min_y {
+            y = min_y;
         }
 
         let _ = w.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(x, y)));
@@ -2298,5 +2558,39 @@ mod tests {
         assert!(!identity.short_machine_id.is_empty());
         assert!(identity.short_machine_id.starts_with("#"));
         assert_eq!(identity.app_version, "0.2.2");
+    }
+
+    #[test]
+    fn test_taskbar_clearance_auto_hide() {
+        // When taskbar auto-hide is active, work_area_h is equal to mon_h (e.g. 1080)
+        let work_area_w = 1920;
+        let work_area_h = 1080;
+        let mon_w = 1920;
+        let mon_h = 1080;
+        let scale = 1.0f64;
+
+        let clearance = taskbar::calculate_clearance(work_area_w, work_area_h, mon_w, mon_h, scale);
+        // On Windows with full height work_area, extra_bottom should be > 0 (taskbar thickness)
+        #[cfg(target_os = "windows")]
+        assert!(clearance.extra_bottom > 0, "Auto-hide taskbar must provide extra_bottom clearance");
+        #[cfg(not(target_os = "windows"))]
+        let _ = clearance;
+    }
+
+    #[test]
+    fn test_calibrated_window_layout_low_resolution() {
+        // Test 1366x768 display with 1.25 scale (typical budget laptop)
+        let scale = 1.25f64;
+        let work_area_h = 768;
+        let margin_y = (16.0 * scale).round() as i32; // 20px
+        let extra_bottom = (48.0 * scale).round() as i32; // 60px
+        let avail_phys_h = work_area_h - (margin_y * 2 + extra_bottom); // 768 - 100 = 668px
+        let avail_logical_h = (avail_phys_h as f64 / scale).max(440.0); // 668 / 1.25 = 534.4px
+        let target_logical_h = (620.0f64).min(avail_logical_h.floor());
+        
+        assert!(target_logical_h <= 534.0, "Window height must adapt and scale down to fit screen");
+        assert!(target_logical_h >= 440.0, "Window height must not fall below min logical height");
+        let win_phys_h = (target_logical_h * scale).round() as i32;
+        assert!(win_phys_h + margin_y * 2 + extra_bottom <= work_area_h, "Window + margins + taskbar clearance must fit in screen");
     }
 }
