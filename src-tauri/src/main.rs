@@ -136,8 +136,15 @@ async fn diagnose_discord() -> proxy::DiscordDiagnosis {
 }
 
 #[tauri::command]
-fn repair_discord() -> Result<(), String> {
-    proxy::repair_discord()
+fn repair_discord(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let mut eng = state.engine.lock().unwrap();
+    let mut cfg = Config::load(&eng.dir);
+    let msg = eng.auto_heal_discord(&mut cfg);
+    let _ = app.emit("watchdog_recovery", &msg);
+    if let Some(ref s) = cfg.strategy {
+        let _ = app.emit("strategy_changed", s);
+    }
+    Ok(msg)
 }
 
 #[tauri::command]
@@ -1873,17 +1880,47 @@ fn main() {
                 engine: Mutex::new(engine),
             });
 
-            // Background lightweight watchdog: checks if winws process died and restarts it if auto_healing is enabled
+            // Background lightweight watchdog: checks if winws process died and auto-heals Discord
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                let mut last_discord_heal = std::time::Instant::now() - Duration::from_secs(300);
                 loop {
                     tokio::time::sleep(Duration::from_secs(12)).await;
                     if let Some(state) = app_handle.try_state::<AppState>() {
-                        let mut eng = state.engine.lock().unwrap();
-                        let cfg = Config::load(&eng.dir);
+                        let (is_on, auto_healing, has_discord) = {
+                            if let Ok(eng) = state.engine.lock() {
+                                let cfg = Config::load(&eng.dir);
+                                (eng.is_on(), cfg.auto_healing, cfg.enabled_apps.iter().any(|a| a == "discord"))
+                            } else {
+                                (false, false, false)
+                            }
+                        };
 
-                        if cfg.auto_healing && eng.is_on() && eng.check_health(&cfg) {
-                            let _ = app_handle.emit("watchdog_recovery", "Motor arka planda otomatik onarıldı.");
+                        if auto_healing && is_on {
+                            // 1) Process watchdog
+                            {
+                                if let Ok(mut eng) = state.engine.lock() {
+                                    let cfg = Config::load(&eng.dir);
+                                    if eng.check_health(&cfg) {
+                                        let _ = app_handle.emit("watchdog_recovery", "Motor arka planda otomatik onarıldı.");
+                                    }
+                                }
+                            }
+
+                            // 2) Discord auto-detection and self-healing watchdog (rate-limited to 45s between attempts)
+                            if has_discord && last_discord_heal.elapsed() > Duration::from_secs(45) {
+                                if proxy::is_discord_failing() {
+                                    last_discord_heal = std::time::Instant::now();
+                                    if let Ok(mut eng) = state.engine.lock() {
+                                        let mut cfg = Config::load(&eng.dir);
+                                        let msg = eng.auto_heal_discord(&mut cfg);
+                                        let _ = app_handle.emit("watchdog_recovery", &msg);
+                                        if let Some(ref s) = cfg.strategy {
+                                            let _ = app_handle.emit("strategy_changed", s);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

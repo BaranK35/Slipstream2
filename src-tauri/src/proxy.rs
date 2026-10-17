@@ -318,7 +318,7 @@ fn rewrite_discord_urls(text: &str, port: u16) -> String {
     result
 }
 
-/// Checks if Discord.exe is currently running.
+/// Checks if Discord.exe or Update.exe is currently running.
 pub fn is_discord_running() -> bool {
     let out = Command::new("tasklist")
         .args(["/FI", "IMAGENAME eq Discord.exe", "/NH", "/FO", "CSV"])
@@ -326,10 +326,102 @@ pub fn is_discord_running() -> bool {
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
         .unwrap_or_default();
-    out.contains("discord.exe")
+    if out.contains("discord.exe") {
+        return true;
+    }
+    let out_up = Command::new("tasklist")
+        .args(["/FI", "IMAGENAME eq Update.exe", "/NH", "/FO", "CSV"])
+        .creation_flags(0x0800_0000)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_lowercase())
+        .unwrap_or_default();
+    out_up.contains("update.exe")
 }
 
-/// Restarts Discord cleanly using Update.exe so it picks up the local relay update endpoint.
+/// Checks if general internet connectivity is functional.
+pub fn is_internet_available() -> bool {
+    let addrs = ["1.1.1.1:443", "8.8.8.8:443"];
+    for addr_str in addrs {
+        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+            if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(1200)).is_ok() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Checks if TCP connection to Discord's primary endpoints (updates and gateway) is successful.
+pub fn probe_discord_connectivity() -> bool {
+    let addrs = [
+        "162.159.138.232:443", // updates.discord.com (Cloudflare)
+        "162.159.130.234:443", // gateway.discord.gg (Cloudflare)
+    ];
+    for addr_str in addrs {
+        if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+            if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(1500)).is_ok() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Checks if Discord updater log recorded a recent failure in the last 120 seconds.
+pub fn has_discord_recent_updater_error() -> bool {
+    let mut log_paths = vec![];
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let current_log = PathBuf::from(&appdata).join("discord").join("logs").join("Discord_updater_rCURRENT.log");
+        if current_log.exists() {
+            log_paths.push(current_log);
+        }
+    }
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        let squirrel_log = PathBuf::from(&local).join("Discord").join("SquirrelSetup.log");
+        if squirrel_log.exists() {
+            log_paths.push(squirrel_log);
+        }
+    }
+
+    for path in log_paths {
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if let Ok(modified) = meta.modified() {
+                if let Ok(elapsed) = modified.elapsed() {
+                    if elapsed < Duration::from_secs(120) {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            let tail: String = content.lines().rev().take(30).collect::<Vec<&str>>().join("\n");
+                            let tail_lower = tail.to_lowercase();
+                            if tail_lower.contains("failed:")
+                                || tail_lower.contains("cert_chain_failed")
+                                || tail_lower.contains("update failed")
+                                || tail_lower.contains("connection refused")
+                                || tail_lower.contains("güvenilmeyen bir kök")
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Determines if Discord is actively trying to run/update but blocked or failing to connect.
+pub fn is_discord_failing() -> bool {
+    if !is_internet_available() {
+        return false;
+    }
+    let running = is_discord_running();
+    let recent_err = has_discord_recent_updater_error();
+    if !running && !recent_err {
+        return false;
+    }
+    !probe_discord_connectivity()
+}
+
+/// Restarts Discord cleanly using Update.exe so it connects cleanly.
 pub fn restart_discord() {
     let _ = Command::new("taskkill")
         .args(["/IM", "Discord.exe", "/T", "/F"])
@@ -681,6 +773,7 @@ pub async fn diagnose_discord() -> DiscordDiagnosis {
 }
 
 /// Completely repairs Discord by patching NEW_UPDATE_ENDPOINT, flushing DNS, and cleanly relaunching.
+#[allow(dead_code)]
 pub fn repair_discord() -> Result<(), String> {
     // 1. Clean any broken or stale NEW_UPDATE_ENDPOINT relay settings
     patch_discord_settings(None);
