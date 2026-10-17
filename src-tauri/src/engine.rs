@@ -630,11 +630,98 @@ pub fn ensure_engine_files(target_dir: &std::path::Path) -> Result<PathBuf, Stri
     Ok(winws_path)
 }
 
+#[repr(C)]
+struct IO_COUNTERS {
+    read_operation_count: u64,
+    write_operation_count: u64,
+    other_operation_count: u64,
+    read_transfer_count: u64,
+    write_transfer_count: u64,
+    other_transfer_count: u64,
+}
+
+#[repr(C)]
+struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
+    per_process_user_time_limit: i64,
+    per_job_user_time_limit: i64,
+    limit_flags: u32,
+    minimum_working_set_size: usize,
+    maximum_working_set_size: usize,
+    active_process_limit: u32,
+    affinity: usize,
+    priority_class: u32,
+    scheduling_class: u32,
+}
+
+#[repr(C)]
+struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
+    basic_limit_information: JOBOBJECT_BASIC_LIMIT_INFORMATION,
+    io_info: IO_COUNTERS,
+    process_memory_limit: usize,
+    job_memory_limit: usize,
+    peak_process_memory_limit: usize,
+    peak_job_memory_limit: usize,
+}
+
+const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
+const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION: u32 = 9;
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn CreateJobObjectW(lp_job_attributes: *mut std::ffi::c_void, lp_name: *const u16) -> isize;
+    fn SetInformationJobObject(
+        h_job: isize,
+        job_object_information_class: u32,
+        lp_job_information: *const std::ffi::c_void,
+        cb_job_information_length: u32,
+    ) -> i32;
+    fn AssignProcessToJobObject(h_job: isize, h_process: isize) -> i32;
+    fn CloseHandle(h_object: isize) -> i32;
+}
+
+/// Creates a Windows Job Object configured with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE.
+/// Any child process assigned to this job object will be immediately and unconditionally
+/// terminated by the Windows NT kernel if the parent process (Slipstream) terminates, crashes,
+/// or is closed for any reason.
+pub fn create_kill_on_close_job() -> Option<isize> {
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+        if job == 0 || job == -1 {
+            return None;
+        }
+
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        let ret = SetInformationJobObject(
+            job,
+            JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            &info as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+
+        if ret == 0 {
+            CloseHandle(job);
+            return None;
+        }
+
+        Some(job)
+    }
+}
+
+pub fn assign_process_to_job(job: isize, process_handle: isize) -> bool {
+    if job == 0 || job == -1 || process_handle == 0 || process_handle == -1 {
+        return false;
+    }
+    unsafe { AssignProcessToJobObject(job, process_handle) != 0 }
+}
+
 pub struct Engine {
     pub dir: PathBuf,
     pub bin: PathBuf,
     child: Option<Child>,
     relay_stop: Option<Arc<AtomicBool>>,
+    job_handle: Option<isize>,
 }
 
 fn push(a: &mut Vec<String>, xs: &[&str]) {
@@ -703,6 +790,7 @@ impl Engine {
             bin,
             child: None,
             relay_stop: None,
+            job_handle: create_kill_on_close_job(),
         }
     }
 
@@ -747,7 +835,13 @@ impl Engine {
             .args(["/IM", "winws.exe", "/T", "/F"])
             .creation_flags(0x0800_0000)
             .output();
-        std::thread::sleep(Duration::from_millis(150));
+
+        let _ = Command::new("sc")
+            .args(["stop", "windivert"])
+            .creation_flags(0x0800_0000)
+            .output();
+
+        std::thread::sleep(Duration::from_millis(80));
     }
 
     fn start_inner(&mut self, cfg: &Config) -> Result<(), String> {
@@ -795,6 +889,17 @@ impl Engine {
             .stderr(Stdio::from(log2))
             .spawn()
             .map_err(|e| format!("DPI motoru başlatılamadı: {e}"))?;
+
+        // Bind child process to Windows Kernel Job Object (KILL_ON_JOB_CLOSE)
+        // If Slipstream is closed, crashes, or is killed in Task Manager, Windows kernel
+        // will immediately and unconditionally terminate winws.exe.
+        use std::os::windows::io::AsRawHandle;
+        if self.job_handle.is_none() {
+            self.job_handle = create_kill_on_close_job();
+        }
+        if let Some(job) = self.job_handle {
+            assign_process_to_job(job, child.as_raw_handle() as isize);
+        }
 
         thread::sleep(Duration::from_millis(300));
         if let Ok(Some(status)) = child.try_wait() {
@@ -881,6 +986,9 @@ impl Engine {
 impl Drop for Engine {
     fn drop(&mut self) {
         self.stop();
+        if let Some(job) = self.job_handle.take() {
+            unsafe { CloseHandle(job) };
+        }
     }
 }
 

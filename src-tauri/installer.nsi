@@ -655,6 +655,10 @@ Section Install
 
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
+  ; Terminate any lingering winws.exe engine processes and stop WinDivert driver before updating/installing
+  nsExec::Exec 'taskkill.exe /IM winws.exe /T /F'
+  nsExec::Exec 'sc.exe stop windivert'
+
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
 
@@ -862,6 +866,8 @@ Section Uninstall
   ; Removes all Autostart entries and shortcuts for ${PRODUCTNAME} and legacy variants
   ; This ensures the program does not launch automatically after uninstallation.
   ${If} $UpdateMode <> 1
+    nsExec::Exec 'taskkill.exe /IM winws.exe /T /F'
+    nsExec::Exec 'sc.exe stop windivert'
     nsExec::Exec 'schtasks.exe /delete /tn "Slipstream" /f'
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCTNAME}"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Slipstream"

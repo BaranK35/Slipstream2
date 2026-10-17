@@ -1,5 +1,5 @@
 {
-  "version": "0.2.5",
-  "notes": "v0.2.5 Güncellemesi:\n- Windows başlangıç (Autostart) mekanizması Windows Görev Zamanlayıcısı (Task Scheduler) ile en yüksek yönetici ayrıcalıklarıyla (Highest Privileges) çalışacak şekilde baştan aşağı yenilendi; bilgisayar açılışında UAC takılması ve Windows Explorer engeli tamamen çözüldü.\n- Geliştirici ve test ortamlarının Windows başlangıç kayıt defterini geçici dosya yollarıyla kirletmesi kalıcı olarak engellendi.\n- Uygulama kaldırıldığında (Uninstall) başlangıç görevleri ve kayıtları eksiksiz temizleniyor.\n- Oyun esnasında sessiz arka plan güncellemeleri ve kapatılabilir güncelleme başarı bildirimi optimize edildi.",
-  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.5/Slipstream_0.2.5_x64-setup.exe"
+  "version": "0.2.6",
+  "notes": "v0.2.6 Güncellemesi:\n- Windows Çekirdek İş Nesnesi (Windows Kernel Job Object - KILL_ON_JOB_CLOSE) entegrasyonu: winws.exe paket motoru işletim sistemi çekirdeği düzeyinde Slipstream'e bağlandı. Slipstream kapandığında, çöktüğünde veya Görev Yöneticisinden sonlandırıldığında motor anında Windows çekirdeği tarafından otomatik kapatılır.\n- Başlangıç ve kapanış süreçlerinde yetim/arkada kalan winws süreçleri ve WinDivert sürücüleri eksiksiz temizleniyor.\n- Kurulumcu ve kaldırıcı (Uninstall) süreçlerinde arka planda çalışan motorlar tam ve güvenli şekilde kapatılıyor.",
+  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.6/Slipstream_0.2.6_x64-setup.exe"
 }

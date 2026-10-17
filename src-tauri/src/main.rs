@@ -2086,6 +2086,8 @@ fn main() {
             std::process::exit(0);
         }
         SINGLE_INSTANCE_MUTEX.store(mutex_handle, Ordering::SeqCst);
+        // Forcefully eliminate any orphaned winws.exe instances left over from previous sessions
+        Engine::kill_all_winws();
     }
 
     tauri::Builder::default()
@@ -2184,16 +2186,19 @@ fn main() {
                 engine: Mutex::new(engine),
             });
 
-            // Background lightweight watchdog: checks if winws process died and restarts it if auto_healing is enabled
+            // Background lightweight watchdog: checks if winws process died and restarts it if auto_healing is enabled.
+            // If engine is OFF, strictly ensures no orphan winws.exe lingers on the system.
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    tokio::time::sleep(Duration::from_secs(12)).await;
+                    tokio::time::sleep(Duration::from_secs(4)).await;
                     if let Some(state) = app_handle.try_state::<AppState>() {
                         let mut eng = state.engine.lock().unwrap();
                         let cfg = Config::load(&eng.dir);
 
-                        if cfg.auto_healing && eng.is_on() && eng.check_health(&cfg) {
+                        if !eng.is_on() {
+                            Engine::kill_all_winws();
+                        } else if cfg.auto_healing && eng.check_health(&cfg) {
                             let _ = app_handle.emit("watchdog_recovery", "Motor arka planda otomatik onarıldı.");
                         }
                     }
