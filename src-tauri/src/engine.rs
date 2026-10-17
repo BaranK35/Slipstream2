@@ -463,9 +463,13 @@ impl Engine {
         }
     }
 
-    /// Starts (or re-applies) everything. On error, stops cleanly.
+    /// Starts (or re-applies) everything. On error, retries once and stops cleanly on fatal error.
     pub fn start(&mut self, cfg: &Config) -> Result<(), String> {
-        let r = self.start_inner(cfg);
+        let mut r = self.start_inner(cfg);
+        if r.is_err() {
+            thread::sleep(Duration::from_millis(350));
+            r = self.start_inner(cfg);
+        }
         if r.is_err() {
             self.stop();
         }

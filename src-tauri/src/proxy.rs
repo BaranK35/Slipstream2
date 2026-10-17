@@ -16,7 +16,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
+    net::TcpStream,
 };
 
 #[link(name = "wininet")]
@@ -449,24 +449,41 @@ pub fn restart_discord() {
     }
 }
 
+fn bind_reusable_listener(port: u16) -> Result<tokio::net::TcpListener, String> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let addr: SocketAddr = format!("127.0.0.1:{port}")
+        .parse()
+        .map_err(|e: std::net::AddrParseError| e.to_string())?;
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
+        .map_err(|e| e.to_string())?;
+    let _ = socket.set_reuse_address(true);
+    let _ = socket.set_nonblocking(true);
+    socket.bind(&addr.into())
+        .map_err(|e| format!("Port {port} bind error: {e}"))?;
+    socket.listen(128)
+        .map_err(|e| format!("Port {port} listen error: {e}"))?;
+    let std_listener: std::net::TcpListener = socket.into();
+    tokio::net::TcpListener::from_std(std_listener)
+        .map_err(|e| format!("TcpListener from_std error: {e}"))
+}
+
 /// Runs the Discord updater relay on port 18809.
 /// Bridges Discord's native updater to Discord servers with TLS 1.3 encryption and URL rewriting.
-#[allow(dead_code)]
 pub async fn run_discord_relay(stop: Arc<AtomicBool>, port: u16) {
     let mut listener = None;
     let mut last_err = String::new();
-    for _i in 0..15 {
+    for _i in 0..25 {
         if stop.load(Ordering::Relaxed) {
             return;
         }
-        match TcpListener::bind(("127.0.0.1", port)).await {
+        match bind_reusable_listener(port) {
             Ok(l) => {
                 listener = Some(l);
                 break;
             }
             Err(e) => {
-                last_err = e.to_string();
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                last_err = e;
+                tokio::time::sleep(Duration::from_millis(150)).await;
             }
         }
     }

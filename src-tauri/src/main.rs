@@ -136,7 +136,10 @@ async fn diagnose_discord() -> proxy::DiscordDiagnosis {
 }
 
 #[tauri::command]
-fn repair_discord() -> Result<(), String> {
+fn repair_discord(state: State<'_, AppState>) -> Result<(), String> {
+    if let Ok(mut eng) = state.engine.lock() {
+        eng.ensure_relay(true);
+    }
     proxy::repair_discord()
 }
 
@@ -405,7 +408,7 @@ async fn send_discord_feedback(
     if webhook_url.is_empty() {
         webhook_url = cfg.feedback_webhook.trim().to_string();
     }
-    if webhook_url.is_empty() {
+    if webhook_url.is_empty() || webhook_url.contains("discord.com/api/webhooks") {
         webhook_url = DEFAULT_FEEDBACK_WEBHOOK.trim().to_string();
     }
 
@@ -1873,24 +1876,23 @@ fn main() {
             let boot_cfg = Config::load(&dir);
             HIDE_ON_BLUR.store(boot_cfg.hide_on_blur, Ordering::SeqCst);
             MINIMIZE_TO_TRAY.store(boot_cfg.minimize_to_tray, Ordering::SeqCst);
-            let has_discord = boot_cfg.enabled_apps.contains(&"discord".to_string());
 
             // Ensure Windows startup registry path points to current executable location (e.g. if portable was moved)
             if boot_cfg.auto_start_pc {
                 let _ = engine::set_windows_autostart(true);
             }
 
-            // Ensure system proxy and Discord settings are completely clean on startup
-            proxy::patch_discord_settings(None);
+            // Ensure system proxy is completely clean on startup
             proxy::clean_stale_proxy();
 
             Engine::kill_all_winws();
             let mut engine = Engine::new(dir, bin);
-            engine.ensure_relay(has_discord);
 
             // Auto-connect bypass on launch if configured
             if boot_cfg.auto_connect {
                 let _ = engine.start(&boot_cfg);
+            } else {
+                proxy::patch_discord_settings(None);
             }
 
             app.manage(AppState {
