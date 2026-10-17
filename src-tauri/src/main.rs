@@ -2099,6 +2099,9 @@ fn main() {
                 }
             }
             WindowEvent::CloseRequested { api, .. } => {
+                if window.label() != "main" {
+                    return;
+                }
                 if MINIMIZE_TO_TRAY.load(Ordering::SeqCst) {
                     api.prevent_close();
                     let _ = window.emit("app_window_visibility", false);
@@ -2118,6 +2121,9 @@ fn main() {
                 }
             }
             WindowEvent::Destroyed => {
+                if window.label() != "main" {
+                    return;
+                }
                 restore_all_boosted_game_priorities();
                 engine::apply_gaming_network_tweaks(false);
                 if let Some(state) = window.try_state::<AppState>() {
