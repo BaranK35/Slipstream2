@@ -136,15 +136,8 @@ async fn diagnose_discord() -> proxy::DiscordDiagnosis {
 }
 
 #[tauri::command]
-fn repair_discord(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
-    let mut eng = state.engine.lock().unwrap();
-    let mut cfg = Config::load(&eng.dir);
-    let msg = eng.auto_heal_discord(&mut cfg);
-    let _ = app.emit("watchdog_recovery", &msg);
-    if let Some(ref s) = cfg.strategy {
-        let _ = app.emit("strategy_changed", s);
-    }
-    Ok(msg)
+fn repair_discord() -> Result<(), String> {
+    proxy::repair_discord()
 }
 
 #[tauri::command]
@@ -322,7 +315,7 @@ fn is_portable() -> bool {
 }
 
 // === Geri Bildirim & Kullanıcı Kimliği Sistemi ===
-const DEFAULT_FEEDBACK_WEBHOOK: &str = "";
+const DEFAULT_FEEDBACK_WEBHOOK: &str = "https://small-disk-73a7.barankayapinar2.workers.dev/";
 
 fn get_machine_guid() -> String {
     #[cfg(target_os = "windows")]
@@ -416,8 +409,8 @@ async fn send_discord_feedback(
         webhook_url = DEFAULT_FEEDBACK_WEBHOOK.trim().to_string();
     }
 
-    if webhook_url.is_empty() || !webhook_url.starts_with("https://discord.com/api/webhooks/") {
-        return Err("Geçerli bir Discord Webhook URL bulunamadı. Lütfen Discord kanalınızın webhook linkini girin.".to_string());
+    if webhook_url.is_empty() || !webhook_url.starts_with("https://") {
+        return Err("Geçerli bir Webhook veya Relay URL bulunamadı (https:// ile başlamalıdır).".to_string());
     }
 
     let identity = get_system_identity();
@@ -465,6 +458,30 @@ async fn send_discord_feedback(
             ),
             "inline": false
         }));
+
+        let engine_dir = s.engine.lock().unwrap().dir.clone();
+        let log_path = engine_dir.join("engine.log");
+        if let Ok(log_content) = std::fs::read_to_string(&log_path) {
+            let lines: Vec<&str> = log_content.lines().collect();
+            let recent_lines = if lines.len() > 15 {
+                &lines[lines.len() - 15..]
+            } else {
+                &lines[..]
+            };
+            let log_snippet = recent_lines.join("\n");
+            if !log_snippet.trim().is_empty() {
+                let trimmed_log = if log_snippet.len() > 950 {
+                    &log_snippet[log_snippet.len() - 950..]
+                } else {
+                    &log_snippet
+                };
+                fields.push(json!({
+                    "name": "📜 Son Motor Logları (engine.log)",
+                    "value": format!("```text\n{}\n```", trimmed_log),
+                    "inline": false
+                }));
+            }
+        }
     }
 
     let embed = json!({
@@ -1880,47 +1897,17 @@ fn main() {
                 engine: Mutex::new(engine),
             });
 
-            // Background lightweight watchdog: checks if winws process died and auto-heals Discord
+            // Background lightweight watchdog: checks if winws process died and restarts it if auto_healing is enabled
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                let mut last_discord_heal = std::time::Instant::now() - Duration::from_secs(300);
                 loop {
                     tokio::time::sleep(Duration::from_secs(12)).await;
                     if let Some(state) = app_handle.try_state::<AppState>() {
-                        let (is_on, auto_healing, has_discord) = {
-                            if let Ok(eng) = state.engine.lock() {
-                                let cfg = Config::load(&eng.dir);
-                                (eng.is_on(), cfg.auto_healing, cfg.enabled_apps.iter().any(|a| a == "discord"))
-                            } else {
-                                (false, false, false)
-                            }
-                        };
+                        let mut eng = state.engine.lock().unwrap();
+                        let cfg = Config::load(&eng.dir);
 
-                        if auto_healing && is_on {
-                            // 1) Process watchdog
-                            {
-                                if let Ok(mut eng) = state.engine.lock() {
-                                    let cfg = Config::load(&eng.dir);
-                                    if eng.check_health(&cfg) {
-                                        let _ = app_handle.emit("watchdog_recovery", "Motor arka planda otomatik onarıldı.");
-                                    }
-                                }
-                            }
-
-                            // 2) Discord auto-detection and self-healing watchdog (rate-limited to 45s between attempts)
-                            if has_discord && last_discord_heal.elapsed() > Duration::from_secs(45) {
-                                if proxy::is_discord_failing() {
-                                    last_discord_heal = std::time::Instant::now();
-                                    if let Ok(mut eng) = state.engine.lock() {
-                                        let mut cfg = Config::load(&eng.dir);
-                                        let msg = eng.auto_heal_discord(&mut cfg);
-                                        let _ = app_handle.emit("watchdog_recovery", &msg);
-                                        if let Some(ref s) = cfg.strategy {
-                                            let _ = app_handle.emit("strategy_changed", s);
-                                        }
-                                    }
-                                }
-                            }
+                        if cfg.auto_healing && eng.is_on() && eng.check_health(&cfg) {
+                            let _ = app_handle.emit("watchdog_recovery", "Motor arka planda otomatik onarıldı.");
                         }
                     }
                 }

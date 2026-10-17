@@ -559,46 +559,6 @@ impl Engine {
         false
     }
 
-    /// 2-Stage Self-Healing for Discord:
-    /// Stage 1: Cleans settings, flushes DNS, restarts winws engine, restarts Discord cleanly.
-    /// Stage 2: If Stage 1 fails, automatically rotates to the next fallback DPI strategy in the ISP order, updates hosts, and restarts Discord.
-    pub fn auto_heal_discord(&mut self, cfg: &mut Config) -> String {
-        // --- STAGE 1: Restart Engine & Clean State ---
-        proxy::patch_discord_settings(None);
-        proxy::flush_dns_cache();
-
-        let _ = self.start(cfg);
-        proxy::restart_discord();
-
-        // Brief pause for Discord updater to probe
-        thread::sleep(Duration::from_millis(3000));
-
-        // Verify if Stage 1 fixed connectivity
-        if proxy::probe_discord_connectivity() {
-            return "Discord açılış sorunu algılandı. Motor yeniden başlatıldı ve Discord başarıyla onarıldı.".into();
-        }
-
-        // --- STAGE 2: Alternative Strategy Fallback ---
-        let strat_list = isp::order(&cfg.isp);
-        let current_strat = cfg.strategy.as_deref().unwrap_or(strat_list[0]);
-        let next_strat = if let Some(pos) = strat_list.iter().position(|&s| s == current_strat) {
-            strat_list[(pos + 1) % strat_list.len()]
-        } else {
-            strat_list[1 % strat_list.len()]
-        };
-
-        cfg.strategy = Some(next_strat.to_string());
-        cfg.save(&self.dir);
-
-        // Re-apply bypass with the new fallback strategy
-        let _ = self.start(cfg);
-        proxy::restart_discord();
-
-        let strat_name = isp::strategy(next_strat).name;
-        format!(
-            "Discord ilk yöntemle açılamadı. Yedek bypass yöntemi ({strat_name}) otomatik devreye alındı ve Discord yeniden başlatıldı."
-        )
-    }
 
     /// Full stop: terminates winws, stops relay, restores Discord settings, cleans hosts and proxy state.
     pub fn stop(&mut self) {

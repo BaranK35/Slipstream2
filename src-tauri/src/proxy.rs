@@ -339,6 +339,7 @@ pub fn is_discord_running() -> bool {
 }
 
 /// Checks if general internet connectivity is functional.
+#[allow(dead_code)]
 pub fn is_internet_available() -> bool {
     let addrs = ["1.1.1.1:443", "8.8.8.8:443"];
     for addr_str in addrs {
@@ -352,6 +353,7 @@ pub fn is_internet_available() -> bool {
 }
 
 /// Checks if TCP connection to Discord's primary endpoints (updates and gateway) is successful.
+#[allow(dead_code)]
 pub fn probe_discord_connectivity() -> bool {
     let addrs = [
         "162.159.138.232:443", // updates.discord.com (Cloudflare)
@@ -368,6 +370,7 @@ pub fn probe_discord_connectivity() -> bool {
 }
 
 /// Checks if Discord updater log recorded a recent failure in the last 120 seconds.
+#[allow(dead_code)]
 pub fn has_discord_recent_updater_error() -> bool {
     let mut log_paths = vec![];
     if let Ok(appdata) = std::env::var("APPDATA") {
@@ -409,6 +412,7 @@ pub fn has_discord_recent_updater_error() -> bool {
 }
 
 /// Determines if Discord is actively trying to run/update but blocked or failing to connect.
+#[allow(dead_code)]
 pub fn is_discord_failing() -> bool {
     if !is_internet_available() {
         return false;
