@@ -251,9 +251,13 @@ fn discord_settings_paths() -> Vec<PathBuf> {
     out
 }
 
-/// Patches Discord's NEW_UPDATE_ENDPOINT so its updater connects through our relay.
+/// Cleans or updates Discord's NEW_UPDATE_ENDPOINT.
+/// Passing None removes any local relay endpoint so Discord connects natively via WinDivert kernel desync.
 pub fn patch_discord_settings(endpoint: Option<&str>) {
     for path in discord_settings_paths() {
+        if !path.exists() {
+            continue;
+        }
         let mut obj: serde_json::Value = std::fs::read_to_string(&path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
@@ -262,13 +266,7 @@ pub fn patch_discord_settings(endpoint: Option<&str>) {
         if let Some(url) = endpoint {
             obj["NEW_UPDATE_ENDPOINT"] = serde_json::Value::String(url.to_string());
         } else if let Some(map) = obj.as_object_mut() {
-            if let Some(val) = map.get("NEW_UPDATE_ENDPOINT") {
-                if let Some(s) = val.as_str() {
-                    if s.contains("127.0.0.1") {
-                        map.remove("NEW_UPDATE_ENDPOINT");
-                    }
-                }
-            }
+            map.remove("NEW_UPDATE_ENDPOINT");
         }
 
         if let Ok(json_str) = serde_json::to_string_pretty(&obj) {
@@ -277,6 +275,8 @@ pub fn patch_discord_settings(endpoint: Option<&str>) {
     }
 }
 
+
+#[allow(dead_code)]
 pub const DISCORD_DOMAINS: &[&str] = &[
     "discord.com", "discord.gg", "discord.co", "discord.media", "discord.new",
     "discord.gift", "discord.gifts", "discord.dev", "discord.design", "discord.store",
@@ -285,12 +285,14 @@ pub const DISCORD_DOMAINS: &[&str] = &[
     "discord-activities.com", "dis.gd",
 ];
 
+#[allow(dead_code)]
 pub fn is_discord_host(host: &str) -> bool {
     let h = host.trim().trim_end_matches('.').to_lowercase();
     let clean = h.split(':').next().unwrap_or(&h);
     DISCORD_DOMAINS.iter().any(|&d| clean == d || clean.ends_with(&format!(".{d}")))
 }
 
+#[allow(dead_code)]
 fn rewrite_discord_urls(text: &str, port: u16) -> String {
     let mut result = String::with_capacity(text.len() + 1024);
     let mut remaining = text;
@@ -353,6 +355,7 @@ pub fn restart_discord() {
 
 /// Runs the Discord updater relay on port 18809.
 /// Bridges Discord's native updater to Discord servers with TLS 1.3 encryption and URL rewriting.
+#[allow(dead_code)]
 pub async fn run_discord_relay(stop: Arc<AtomicBool>, port: u16) {
     let mut listener = None;
     let mut last_err = String::new();
@@ -679,14 +682,14 @@ pub async fn diagnose_discord() -> DiscordDiagnosis {
 
 /// Completely repairs Discord by patching NEW_UPDATE_ENDPOINT, flushing DNS, and cleanly relaunching.
 pub fn repair_discord() -> Result<(), String> {
-    // 1. Ensure Discord settings are patched with the relay URL
-    patch_discord_settings(Some(&format!("http://127.0.0.1:{}/", DISCORD_RELAY_PORT)));
+    // 1. Clean any broken or stale NEW_UPDATE_ENDPOINT relay settings
+    patch_discord_settings(None);
 
-    // 2. Flush DNS
-    flush_dns_cache();
-
-    // 3. Restart Discord cleanly
+    // 2. Terminate any hung Discord or Update processes and restart cleanly
     restart_discord();
+
+    // 3. Flush DNS
+    flush_dns_cache();
 
     Ok(())
 }

@@ -446,21 +446,12 @@ impl Engine {
         self.child.is_some()
     }
 
-    /// Ensures the Discord updater relay is running if enabled, or stopped if not.
-    pub fn ensure_relay(&mut self, enabled: bool) {
-        if enabled {
-            if self.relay_stop.is_none() {
-                let r_stop = Arc::new(AtomicBool::new(false));
-                self.relay_stop = Some(r_stop.clone());
-                tauri::async_runtime::spawn(proxy::run_discord_relay(r_stop, proxy::DISCORD_RELAY_PORT));
-            }
-            proxy::patch_discord_settings(Some(&format!("http://127.0.0.1:{}/", proxy::DISCORD_RELAY_PORT)));
-        } else {
-            if let Some(s) = self.relay_stop.take() {
-                s.store(true, Ordering::Relaxed);
-            }
-            proxy::patch_discord_settings(None);
+    /// Ensures the Discord settings remain clean and free of stale local proxy endpoints.
+    pub fn ensure_relay(&mut self, _enabled: bool) {
+        if let Some(s) = self.relay_stop.take() {
+            s.store(true, Ordering::Relaxed);
         }
+        proxy::patch_discord_settings(None);
     }
 
     /// Starts (or re-applies) everything. On error, stops cleanly.
@@ -472,13 +463,14 @@ impl Engine {
         r
     }
 
-/// Forcefully terminates any orphan winws.exe processes to free WinDivert driver handles.
-pub fn kill_all_winws() {
-    let _ = Command::new("taskkill")
-        .args(["/IM", "winws.exe", "/T", "/F"])
-        .creation_flags(0x0800_0000)
-        .output();
-}
+    /// Forcefully terminates any orphan winws.exe processes to free WinDivert driver handles.
+    pub fn kill_all_winws() {
+        let _ = Command::new("taskkill")
+            .args(["/IM", "winws.exe", "/T", "/F"])
+            .creation_flags(0x0800_0000)
+            .output();
+        std::thread::sleep(Duration::from_millis(150));
+    }
 
     fn start_inner(&mut self, cfg: &Config) -> Result<(), String> {
         if let Some(mut c) = self.child.take() {

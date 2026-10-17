@@ -1856,6 +1856,10 @@ fn main() {
                 let _ = engine::set_windows_autostart(true);
             }
 
+            // Ensure system proxy and Discord settings are completely clean on startup
+            proxy::patch_discord_settings(None);
+            proxy::clean_stale_proxy();
+
             Engine::kill_all_winws();
             let mut engine = Engine::new(dir, bin);
             engine.ensure_relay(has_discord);
