@@ -1,5 +1,5 @@
 {
-  "version": "0.2.7",
-  "notes": "v0.2.7 Güncellemesi:\n- Windows Çekirdek İş Nesnesi (Windows Kernel Job Object - KILL_ON_JOB_CLOSE) tam entegrasyonu: winws.exe paket motoru doğrudan Windows çekirdeğine bağlandı. Slipstream kapandığında, çöktüğünde veya Görev Yöneticisinden sonlandırıldığında motor anında Windows çekirdeği tarafından otomatik kapatılır.\n- Başlangıçta ve uygulama kapanışında yetim winws süreçleri ve WinDivert sürücü süpürücüsü eklendi.\n- Güncelleme açıklamaları ve sürüm yenilikleri (Release Highlights) penceresi güncel sürümde ve çevrimdışı durumda da tam görünecek şekilde düzeltildi.\n- Masaüstü kısayolları ve başlangıç çakışmaları giderildi.",
-  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.7/Slipstream_0.2.7_x64-setup.exe"
+  "version": "0.2.9",
+  "notes": "v0.2.9 Güncellemesi:\n- Otomatik Strateji Tarama (Autotune) arayüz kayma ve başlık çubuğunun ekran dışına taşma sorunu giderildi.\n- Otomatik güncelleme açık veya kapalı fark etmeksizin sistem tepsisi ve arayüz bildirimleri anında gösterilir.\n- Arka planda sıfır CPU ve kaynak tüketimi optimizasyonu yapıldı.",
+  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.9/Slipstream_0.2.9_x64-setup.exe"
 }
