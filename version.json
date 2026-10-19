@@ -1,5 +1,5 @@
 {
-  "version": "0.3.1",
-  "notes": "v0.3.1 Güncellemesi:\n- Tepsiye küçültme ve başlık çubuğu tıklama izolasyonu sağlandı.\n- Gelişmiş çift katmanlı odak kaybında (blur) otomatik gizlenme entegre edildi.\n- Doğrudan Win32 SW_HIDE çağrısı ile pencere asılı kalması giderildi.\n- Arka planda çalışırken ikinci kez açılma ve tepsi simgesi tıklama kararlılığı artırıldı.\n- Otomatik güncelleme yükleyicisi ve donma sorunları çözüldü.",
-  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.3.1/Slipstream_0.3.1_x64-setup.exe"
+  "version": "0.3.2",
+  "notes": "v0.3.2 Güncellemesi:\n- Sistem tepsisi (tray) ve gizli bölme simgesi güvenilirliği artırıldı.\n- Kısayoldan açıldığında arkada gizli başlama engellendi, pencere doğrudan açılır.\n- Arka planda çalışırken kısayola tıklandığında anında öne getirilme (Wakeup) sağlandı.\n- Kapanışta WinDivert sürücüsü ve tüm alt süreçlerin eksiksiz sonlandırılması garantilendi.\n- Anında güncelleme bildirimi ve kararlılık iyileştirmeleri uygulandı.",
+  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.3.2/Slipstream_0.3.2_x64-setup.exe"
 }
