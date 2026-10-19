@@ -1,5 +1,5 @@
 {
-  "version": "0.3.0",
-  "notes": "v0.3.0 Güncellemesi:\n- Canlı anında güncelleme sinyali (SSE push) entegre edildi.\n- Başlangıçta ve arka planda açık/kapalı bağımsız anında güncelleme bildirimleri eklendi.\n- Sıfır gecikmeli, %0 CPU ve minimum kaynak optimizasyonu tamamlandı.",
-  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.3.0/Slipstream_0.3.0_x64-setup.exe"
+  "version": "0.3.1",
+  "notes": "v0.3.1 Güncellemesi:\n- Tepsiye küçültme ve başlık çubuğu tıklama izolasyonu sağlandı.\n- Gelişmiş çift katmanlı odak kaybında (blur) otomatik gizlenme entegre edildi.\n- Doğrudan Win32 SW_HIDE çağrısı ile pencere asılı kalması giderildi.\n- Arka planda çalışırken ikinci kez açılma ve tepsi simgesi tıklama kararlılığı artırıldı.\n- Otomatik güncelleme yükleyicisi ve donma sorunları çözüldü.",
+  "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.3.1/Slipstream_0.3.1_x64-setup.exe"
 }
