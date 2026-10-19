@@ -1,5 +1,5 @@
 {
   "version": "0.2.9",
-  "notes": "v0.2.9 Güncellemesi:\n- Otomatik Strateji Tarama (Autotune) arayüz kayma ve başlık çubuğunun ekran dışına taşma sorunu giderildi.\n- Otomatik güncelleme açık veya kapalı fark etmeksizin sistem tepsisi ve arayüz bildirimleri anında gösterilir.\n- Arka planda sıfır CPU ve kaynak tüketimi optimizasyonu yapıldı.",
+  "notes": "v0.2.9 Guncellemesi:\n- Otomatik Strateji Tarama (Autotune) arayuz kayma ve baslik cubugunun ekran disina tasma sorunu giderildi.\n- Otomatik guncelleme acik veya kapali fark etmeksizin sistem tepsisi ve arayuz bildirimleri aninda gosterilir.\n- Arka planda sifir CPU ve kaynak tuketimi optimizasyonu yapildi.",
   "url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.2.9/Slipstream_0.2.9_x64-setup.exe"
 }
