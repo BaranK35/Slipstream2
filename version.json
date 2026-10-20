@@ -1,7 +1,7 @@
 {
-  "version": "0.3.3",
-  "release_url": "https://github.com/BaranK35/Slipstream2/releases/tag/v0.3.3",
-  "download_url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.3.3/Slipstream_0.3.3_x64-setup.exe",
-  "release_notes": "## Slipstream v0.3.3 - Yenilikler ve İyileştirmeler\n\n### ⚡ Kesintisiz Arka Plan Güncellemesi\n- Oyunlar veya tam ekran uygulamalar açıkken güncelleme esnasında dil seçim diyaloğunun takılması engellendi; arka planda tamamen sessiz kurulur.\n\n### 🎯 Gömülü Sürüm Senkronizasyonu\n- Motor ve arayüz sürüm tanımları tam uyumlu hale getirildi, yanlış güncelleme uyarıları giderildi.\n\n### 🚀 Steam & Oyun İndirme Hızı Koruması\n- Steam ve oyun CDN trafiği DPI motoru kapsamı dışında tutularak maksimum indirme hızı ve bağlantı kararlılığı sağlandı.\n\n### 🛡️ Anında Kapanma & Tepsi Temizliği\n- Uygulama kapatıldığında tepsi simgesi ve pencere 5ms içinde kaldırılarak sistem kilitlenmeleri önlendi.\n\n---\n**Kurulum Dosyası:**\n- `Slipstream_0.3.3_x64-setup.exe` *(Tek dosya NSIS Kurulum Paketi)*\n",
+  "version": "0.3.4",
+  "release_url": "https://github.com/BaranK35/Slipstream2/releases/tag/v0.3.4",
+  "download_url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.3.4/Slipstream_0.3.4_x64-setup.exe",
+  "release_notes": "## Slipstream v0.3.4 - Yenilikler ve İyileştirmeler\n\n### 📱 Discord QR Kod Giriş Desteği\n- Discord masaüstü uygulamasında mobil QR kod ile giriş yapılırken `remote-auth-gateway.discord.gg` WebSocket sunucusuna uygulanan ISP engeli ve DNS zehirlemesi baypas edildi.\n\n### ⚡ Temiz Anycast IP Eşlemesi\n- QR kod ağ geçidi doğrudan Cloudflare Anycast IP havuzuna (`162.159.130.234`) yönlendirilerek üç noktada takılma sorunu tamamen giderildi.\n\n### 🎙️ Ses & Telemetri Gecikme İyileştirmesi\n- `latency.discord.media` alt alan adı motor kapsamına alınarak ses bağlantısı kurma süreleri ve ping ölçümleri optimize edildi.\n\n---\n**Kurulum Dosyası:**\n- `Slipstream_0.3.4_x64-setup.exe` *(Tek dosya NSIS Kurulum Paketi)*\n",
   "mandatory": false
 }
