@@ -1,7 +1,7 @@
 {
-  "version": "0.3.4",
-  "release_url": "https://github.com/BaranK35/Slipstream2/releases/tag/v0.3.4",
-  "download_url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.3.4/Slipstream_0.3.4_x64-setup.exe",
-  "release_notes": "## Slipstream v0.3.4 - Yenilikler ve İyileştirmeler\n\n### 📱 Discord QR Kod Giriş Desteği\n- Discord masaüstü uygulamasında mobil QR kod ile giriş yapılırken `remote-auth-gateway.discord.gg` WebSocket sunucusuna uygulanan ISP engeli ve DNS zehirlemesi baypas edildi.\n\n### ⚡ Temiz Anycast IP Eşlemesi\n- QR kod ağ geçidi doğrudan Cloudflare Anycast IP havuzuna (`162.159.130.234`) yönlendirilerek üç noktada takılma sorunu tamamen giderildi.\n\n### 🎙️ Ses & Telemetri Gecikme İyileştirmesi\n- `latency.discord.media` alt alan adı motor kapsamına alınarak ses bağlantısı kurma süreleri ve ping ölçümleri optimize edildi.\n\n---\n**Kurulum Dosyası:**\n- `Slipstream_0.3.4_x64-setup.exe` *(Tek dosya NSIS Kurulum Paketi)*\n",
+  "version": "0.3.5",
+  "release_url": "https://github.com/BaranK35/Slipstream2/releases/tag/v0.3.5",
+  "download_url": "https://github.com/BaranK35/Slipstream2/releases/download/v0.3.5/Slipstream_0.3.5_x64-setup.exe",
+  "release_notes": "## Slipstream v0.3.5 - Yenilikler ve İyileştirmeler\n\n### 🛡️ Pencere Kontrolleri İzolasyonu\n- Güncelleme bildirimleri, pencereler veya banner gösterildiğinde küçültme/gizleme (-) ve kapatma (X) butonlarının kilitlenmesi veya tıklama almaması sorunu kesin olarak çözüldü.\n- Başlık çubuğu butonları en üst katmana (z-index 1000) taşındı, sürükleme alanından ve harici tıklama yakalayıcılardan tamamen izole edildi.\n\n### ⚡ Kesintisiz Güncelleme & Şimdi Güncelle Desteği\n- 'Şimdi Güncelle' butonuna basıldığında indirme tetikleme güvenliği artırıldı; eksik URL durumunda otomatik yeniden doğrulama ve anlık geri bildirim mekanizması eklendi.\n- Arka plan kurulumu başlamadan önce uygulama işlem kilidi (single-instance mutex) otomatik serbest bırakılarak NSIS kurulumunun takılmadan sessizce tamamlanması sağlandı.\n\n### 🚀 Çift Katmanlı Kapatma Fallback'i\n- Uygulama kapatma ve gizleme çağrıları bağımsız işletim sistemi API'leri ile yedeklendi; sistem yük altında olsa bile anında tepki verir.\n\n---\n**Kurulum Dosyası:**\n- `Slipstream_0.3.5_x64-setup.exe` *(Tek dosya NSIS Kurulum Paketi)*\n",
   "mandatory": false
 }
