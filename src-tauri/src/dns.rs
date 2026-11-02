@@ -22,32 +22,28 @@ pub const DISCORD_HOST_MAP: &[(&str, &str)] = &[
     ("gateway.discord.gg", "162.159.130.234"),
     ("status.discord.com", "162.159.138.232"),
     ("updates.discord.com", "162.159.138.232"),
-    ("dl.discordapp.net", "162.159.138.232"),
+    ("dl.discordapp.net", "104.18.52.172"),
     ("cdn.discordapp.com", "162.159.130.233"),
-    ("media.discordapp.net", "162.159.129.235"),
-    ("images-ext-1.discordapp.net", "162.159.134.232"),
+    ("media.discordapp.net", "162.159.129.232"),
+    ("images-ext-1.discordapp.net", "162.159.130.232"),
     ("images-ext-2.discordapp.net", "162.159.130.232"),
-    ("attachments.discord.net", "162.159.135.232"),
-    ("attachments.discord.com", "162.159.138.232"),
-    ("cdn.discord.com", "162.159.138.232"),
-    ("discordapp.com", "162.159.138.232"),
-    ("discord.gg", "162.159.138.232"),
-    ("discordapp.net", "162.159.138.232"),
-    ("discordcdn.com", "162.159.138.232"),
-    ("discordsays.com", "162.159.138.232"),
-    ("discordsez.com", "162.159.138.232"),
-    ("discordactivities.com", "162.159.138.232"),
-    ("discord-activities.com", "162.159.138.232"),
-    ("dis.gd", "162.159.138.232"),
-    ("discord.co", "162.159.138.232"),
-    ("discord.dev", "162.159.138.232"),
-    ("discord.new", "162.159.138.232"),
-    ("discord.gift", "162.159.138.232"),
-    ("discord.gifts", "162.159.138.232"),
-    ("discord.store", "162.159.138.232"),
-    ("discord.tools", "162.159.138.232"),
-    ("discord.design", "162.159.138.232"),
-    ("discord.media", "162.159.129.235"),
+    ("discordapp.com", "162.159.135.233"),
+    ("discord.gg", "162.159.130.234"),
+    ("discordcdn.com", "162.159.137.233"),
+    ("discordsays.com", "172.64.153.7"),
+    ("discordsez.com", "104.18.38.75"),
+    ("discordactivities.com", "172.64.155.82"),
+    ("dis.gd", "172.64.150.180"),
+    ("discord.co", "104.17.51.93"),
+    ("discord.dev", "104.21.72.221"),
+    ("discord.new", "104.21.89.187"),
+    ("discord.gift", "104.21.25.51"),
+    ("discord.gifts", "104.21.82.160"),
+    ("discord.store", "23.227.38.74"),
+    ("discord.design", "104.21.80.173"),
+    ("discord.media", "162.159.130.235"),
+    ("remote-auth-gateway.discord.gg", "162.159.130.234"),
+    ("latency.discord.media", "162.159.130.235"),
 ];
 
 // Real Anycast IPs for Roblox services (bypasses ISP DNS poisoning)
@@ -148,7 +144,7 @@ pub const ROBLOX_HOST_MAP: &[(&str, &str)] = &[
 
 fn ps(script: &str) -> String {
     Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script])
         .creation_flags(0x0800_0000)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
@@ -174,29 +170,87 @@ fn ensure_hosts_writable() {
     }
 }
 
+fn is_stray_bypass_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') || trimmed.is_empty() {
+        return false;
+    }
+    let code_part = trimmed.split('#').next().unwrap_or("");
+    code_part.split_whitespace().skip(1).any(|host| {
+        let h = host.to_ascii_lowercase();
+        DISCORD_HOST_MAP.iter().any(|(d, _)| h == *d)
+            || ROBLOX_HOST_MAP.iter().any(|(d, _)| h == *d)
+            || h == "discord.com"
+            || h.ends_with(".discord.com")
+            || h == "discordapp.com"
+            || h.ends_with(".discordapp.com")
+            || h == "discordapp.net"
+            || h.ends_with(".discordapp.net")
+            || h == "discord.gg"
+            || h.ends_with(".discord.gg")
+            || h == "discordcdn.com"
+            || h.ends_with(".discordcdn.com")
+            || h == "discord.media"
+            || h.ends_with(".discord.media")
+            || h == "dis.gd"
+            || h == "discord.co"
+            || h == "discord.dev"
+            || h == "discord.new"
+            || h == "discord.gift"
+            || h == "discord.gifts"
+            || h == "discord.store"
+            || h == "discord.design"
+            || h == "discordsays.com"
+            || h == "discordsez.com"
+            || h == "discordactivities.com"
+            || h == "discord-activities.com"
+            || h == "roblox.com"
+            || h.ends_with(".roblox.com")
+            || h.ends_with(".rbxcdn.com")
+            || h.ends_with(".arkoselabs.com")
+    })
+}
+
+/// Filters out both the Slipstream bypass block and any stray bypass mappings from hosts content.
+pub fn filter_hosts_content(content: &str) -> String {
+    let mut new_lines = Vec::new();
+    let mut in_block = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains(HOSTS_TAG_START) {
+            in_block = true;
+            continue;
+        }
+        if trimmed.contains(HOSTS_TAG_END) {
+            in_block = false;
+            continue;
+        }
+        if in_block {
+            continue;
+        }
+
+        // Remove stray un-tagged Discord/Roblox bypass entries
+        if is_stray_bypass_line(line) {
+            continue;
+        }
+
+        new_lines.push(line);
+    }
+    let mut cleaned = new_lines.join("\r\n");
+    if !cleaned.ends_with("\r\n") {
+        cleaned.push_str("\r\n");
+    }
+    cleaned
+}
+
 /// Removes Slipstream bypass mappings from the Windows hosts file.
 pub fn clear_bypass_hosts() {
     if let Ok(content) = fs::read_to_string(HOSTS_FILE) {
-        if content.contains(HOSTS_TAG_START) {
-            let mut new_lines = Vec::new();
-            let mut in_block = false;
-            for line in content.lines() {
-                if line.contains(HOSTS_TAG_START) {
-                    in_block = true;
-                    continue;
-                }
-                if line.contains(HOSTS_TAG_END) {
-                    in_block = false;
-                    continue;
-                }
-                if !in_block {
-                    new_lines.push(line);
-                }
-            }
-            let mut cleaned = new_lines.join("\r\n");
-            if !cleaned.ends_with("\r\n") {
-                cleaned.push_str("\r\n");
-            }
+        let has_tag = content.contains(HOSTS_TAG_START);
+        let has_stray = content.lines().any(is_stray_bypass_line);
+
+        if has_tag || has_stray {
+            let cleaned = filter_hosts_content(&content);
             ensure_hosts_writable();
             let _ = fs::write(HOSTS_FILE, cleaned);
             flush();
@@ -247,22 +301,22 @@ pub fn apply_bypass_hosts(cfg: &Config) {
 }
 
 /// Configures active network adapter DNS servers to fast clean public DNS (e.g. Cloudflare / Google / Quad9 / AdGuard)
-/// to completely defeat ISP DNS poisoning for Discord voice servers and other dynamic subdomains.
+/// across both IPv4 and IPv6 to completely defeat ISP DNS poisoning and leakage.
 /// Saves state file before modifying, and flushes DNS cache.
 pub fn apply_dns(cfg: &Config, dir: &Path) {
     let state_file = dir.join(STATE_FILE);
     let _ = fs::write(&state_file, "active");
 
-    let (primary, secondary) = match cfg.doh_provider.to_lowercase().as_str() {
-        "google" => ("8.8.8.8", "8.8.4.4"),
-        "quad9" => ("9.9.9.9", "149.112.112.112"),
-        "adguard" => ("94.140.14.140", "94.140.14.141"),
-        "yandex" => ("77.88.8.8", "77.88.8.1"),
-        _ => ("1.1.1.1", "8.8.8.8"),
+    let (primary, secondary, ipv6_primary, ipv6_secondary) = match cfg.doh_provider.to_lowercase().as_str() {
+        "google" => ("8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844"),
+        "quad9" => ("9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9"),
+        "adguard" => ("94.140.14.140", "94.140.14.141", "2a10:50c0::ad1:ff", "2a10:50c0::ad2:ff"),
+        "yandex" => ("77.88.8.8", "77.88.8.1", "2a02:6b8::feed:0ff", "2a02:6b8:0:1::feed:0ff"),
+        _ => ("1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001"),
     };
 
     let script = format!(
-        r"Get-NetAdapter | Where-Object {{ $_.Status -eq 'Up' }} | ForEach-Object {{ Set-DnsClientServerAddress -InterfaceIndex $_.InterfaceIndex -ServerAddresses ('{primary}', '{secondary}') }}"
+        r"Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object {{ $idx = $_.InterfaceIndex; Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses @('{primary}', '{secondary}') -ErrorAction SilentlyContinue; Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses @('{ipv6_primary}', '{ipv6_secondary}') -ErrorAction SilentlyContinue }}"
     );
     ps(&script);
     flush();
@@ -299,7 +353,7 @@ pub fn recover(dir: &Path) {
 
 /// Force-resets all active network adapter DNS servers to automatic DHCP.
 pub fn reset_all_adapters() {
-    ps(r"Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.InterfaceIndex -ResetServerAddresses }");
+    ps(r"Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object { Set-DnsClientServerAddress -InterfaceIndex $_.InterfaceIndex -ResetServerAddresses -ErrorAction SilentlyContinue }");
     flush();
 }
 
@@ -320,3 +374,41 @@ impl Dns {
     pub fn stop(&mut self) {}
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_filter_hosts_content_removes_block_and_strays() {
+        let input = "\
+# localhost name resolution
+127.0.0.1 localhost
+::1 localhost
+
+# Stray untagged Discord bypass entries
+162.159.138.232 updates.discord.com
+162.159.138.232 discord.com # inline comment
+162.159.130.234 gateway.discord.gg
+128.116.44.3 roblox.com
+
+# --- SLIPSTREAM BYPASS HOSTS START ---
+162.159.138.232 status.discord.com
+128.116.44.3 api.roblox.com
+# --- SLIPSTREAM BYPASS HOSTS END ---
+
+# Custom local network entries
+192.168.1.1 router.local
+";
+
+        let cleaned = filter_hosts_content(input);
+        assert!(!cleaned.contains("updates.discord.com"));
+        assert!(!cleaned.contains("gateway.discord.gg"));
+        assert!(!cleaned.contains("status.discord.com"));
+        assert!(!cleaned.contains("roblox.com"));
+        assert!(!cleaned.contains(HOSTS_TAG_START));
+        assert!(!cleaned.contains(HOSTS_TAG_END));
+        assert!(cleaned.contains("127.0.0.1 localhost"));
+        assert!(cleaned.contains("::1 localhost"));
+        assert!(cleaned.contains("192.168.1.1 router.local"));
+    }
+}

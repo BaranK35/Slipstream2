@@ -146,6 +146,8 @@ pub fn get_preset_domains_for_app(name: &str, exe_name: &str) -> Vec<String> {
             "googlevideo.com".into(),
             "ytimg.com".into(),
         ]
+    } else if is_browser(name, exe_name) {
+        get_browser_domains()
     } else {
         let clean_token: String = name_l
             .chars()
@@ -157,6 +159,57 @@ pub fn get_preset_domains_for_app(name: &str, exe_name: &str) -> Vec<String> {
             vec![format!("{}.com", clean_token)]
         }
     }
+}
+
+pub fn is_browser(name: &str, exe_name: &str) -> bool {
+    let lower_name = name.to_lowercase();
+    let lower_exe = exe_name.to_lowercase();
+    let combined = format!("{lower_name} {lower_exe}");
+    let browser_keywords = [
+        "brave", "chrome", "firefox", "msedge", "edge", "opera", "vivaldi",
+        "zen", "waterfox", "librewolf", "tor", "arc", "chromium", "yandex",
+    ];
+    browser_keywords.iter().any(|&b| combined.contains(b))
+}
+
+pub fn get_browser_domains() -> Vec<String> {
+    vec![
+        // Secure DNS / DNS-over-HTTPS (DoH) providers (Chromium/Brave/Firefox secure DNS)
+        "cloudflare-dns.com".into(), "dns.google".into(), "1.1.1.1".into(), "one.one.one.one".into(),
+        "dns.quad9.net".into(), "doh.opendns.com".into(), "dns.adguard-dns.com".into(), "security.cloudflare-dns.com".into(),
+        // Social Media & Messaging
+        "discord.com".into(), "discord.gg".into(), "discordapp.com".into(), "discordapp.net".into(),
+        "gateway.discord.gg".into(), "cdn.discordapp.com".into(), "media.discordapp.net".into(),
+        "updates.discord.com".into(), "dl.discordapp.net".into(),
+        "x.com".into(), "twitter.com".into(), "twimg.com".into(), "t.co".into(), "abs.twimg.com".into(), "api.twitter.com".into(),
+        "instagram.com".into(), "cdninstagram.com".into(), "ig.me".into(), "threads.net".into(),
+        "reddit.com".into(), "redd.it".into(), "redditstatic.com".into(), "redditmedia.com".into(),
+        "i.redd.it".into(), "preview.redd.it".into(), "v.redd.it".into(),
+        "telegram.org".into(), "t.me".into(), "telesco.pe".into(),
+        "tiktok.com".into(), "tiktokcdn.com".into(),
+        // Community, Forums & Blogs
+        "eksisozluk.com".into(), "eksisozluk1923.com".into(), "eksisozluk2023.com".into(), "eksisozluk42.com".into(), "eksisozluk.org".into(),
+        "medium.com".into(), "substack.com".into(),
+        // Gaming Platforms
+        "roblox.com".into(), "rbxcdn.com".into(), "setup.rbxcdn.com".into(), "roblox.com.edgekey.net".into(),
+        "steampowered.com".into(), "steamcommunity.com".into(), "steamstatic.com".into(),
+        "epicgames.com".into(), "unrealengine.com".into(),
+        "riotgames.com".into(), "leagueoflegends.com".into(), "playvalorant.com".into(),
+        // Streaming & Media
+        "youtube.com".into(), "youtu.be".into(), "googlevideo.com".into(), "ytimg.com".into(), "ggpht.com".into(), "youtubei.googleapis.com".into(),
+        "twitch.tv".into(), "ttvnw.net".into(), "jtvnw.net".into(), "twitchcdn.net".into(),
+        "kick.com".into(), "kick-cdn.com".into(), "stream.kick.com".into(),
+        "spotify.com".into(), "scdn.co".into(),
+        // Commonly blocked services / utilities in Turkey & globally
+        "pastebin.com".into(), "imgur.com".into(), "i.imgur.com".into(), "wattpad.com".into(), "archive.org".into(),
+        "proton.me".into(), "protonmail.com".into(), "protonvpn.com".into(),
+        "wikipedia.org".into(), "wikimedia.org".into(),
+        "mega.nz".into(), "nordvpn.com".into(), "mullvad.net".into(),
+        // Adult / Restricted services
+        "pornhub.com".into(), "phncdn.com".into(), "xvideos.com".into(), "xnxx.com".into(),
+        // Torrent & indexers
+        "nyaa.si".into(), "1337x.to".into(), "thepiratebay.org".into(), "rutracker.org".into(),
+    ]
 }
 
 pub fn is_likely_launcher(name: &str, exe_name: &str) -> bool {
@@ -178,20 +231,36 @@ pub fn is_likely_launcher(name: &str, exe_name: &str) -> bool {
 }
 
 pub fn is_likely_game(name: &str, exe_name: &str, install_location: &str) -> bool {
+    let lower_exe = exe_name.to_lowercase();
+    let lower_name = name.to_lowercase();
+    if is_system_process(&lower_exe) || is_system_process(&lower_name) {
+        return false;
+    }
     if is_likely_launcher(name, exe_name) {
         return false;
     }
 
     let lower = format!("{} {} {}", name, exe_name, install_location).to_lowercase();
+    // Exclude Windows background services and Xbox/GameInput utilities from being counted as games
+    if lower.contains("gamingservices") || lower.contains("gameinput") || lower.contains("gamebar") || lower.contains("xbox") {
+        return false;
+    }
+
     let game_keywords = [
-        "game", "valve", "valorant", "league", "counter-strike", "cs2", "csgo",
+        "valve", "valorant", "league", "counter-strike", "cs2", "csgo",
         "unreal", "blizzard", "ea games", "electronic arts", "ubisoft",
         "rockstar", "gta", "grand theft auto", "cyberpunk", "witcher", "roblox", "minecraft",
         "simulator", "truck", "assetto", "corsa", "fifa", "nba", "pes", "konami", "genshin",
         "honkai", "star rail", "apex", "overwatch", "pubg", "fortnite", "dota", "destiny",
         "warframe", "rust", "tarkov", "battlestate", "unity", "7 days to die", "vanguard"
     ];
-    game_keywords.iter().any(|&k| lower.contains(k))
+    if game_keywords.iter().any(|&k| lower.contains(k)) {
+        return true;
+    }
+    if lower_name.ends_with(" game") || lower_name.starts_with("game ") || lower_exe.starts_with("game_") || lower_exe.ends_with("_game.exe") {
+        return true;
+    }
+    false
 }
 
 pub fn is_system_process(name: &str) -> bool {
@@ -205,9 +274,13 @@ pub fn is_system_process(name: &str) -> bool {
         "securityhealthsystray.exe", "securityhealthservice.exe", "smartscreen.exe",
         "wlanext.exe", "dashost.exe", "audiodg.exe", "taskmgr.exe", "cmd.exe", "powershell.exe",
         "pwsh.exe", "wscript.exe", "cscript.exe", "dllhost.exe", "msedgewebview2.exe",
-        "slipstream.exe", "winws.exe", "windivert.sys", "vgc.exe", "vgtray.exe"
+        "slipstream.exe", "winws.exe", "windivert.sys", "vgc.exe", "vgtray.exe",
+        "gamingservices.exe", "gamingservicesnet.exe", "gameinputredistservice.exe",
+        "gameinputrawinputproxy.exe", "gameinputservice.exe", "gamebar.exe",
+        "gamebarpresencewriter.exe", "gamebarft.exe", "gamingtcui.exe", "xboxpcapp.exe",
+        "xboxapp.exe", "xboxgamebar.exe", "xboxservices.exe"
     ];
-    sys.iter().any(|&s| lower == s)
+    sys.iter().any(|&s| lower == s || lower == s.strip_suffix(".exe").unwrap_or(s))
 }
 
 #[cfg(target_os = "windows")]
@@ -665,6 +738,9 @@ mod tests {
         assert!(!is_likely_game("Steam", "steam.exe", ""));
         assert!(!is_likely_game("Epic Games Launcher", "EpicGamesLauncher.exe", ""));
         assert!(!is_likely_game("Riot Client", "RiotClientServices.exe", ""));
+        assert!(!is_likely_game("gamingservices", "gamingservices.exe", ""));
+        assert!(!is_likely_game("GameInputRedistService", "GameInputRedistService.exe", ""));
+        assert!(!is_likely_game("GameBar", "GameBar.exe", ""));
     }
 
     #[test]

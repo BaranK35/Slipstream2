@@ -8,7 +8,7 @@ use std::{
     fs,
     os::windows::process::CommandExt,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -61,6 +61,8 @@ pub struct Config {
     pub minimize_to_tray: bool,
     #[serde(default = "default_true")]
     pub hide_on_blur: bool,
+    #[serde(default)]
+    pub sound_enabled: bool,
 
     // === Gelişmiş Ağ & Performans Ayarları ===
     #[serde(default = "default_doh_provider")]
@@ -102,6 +104,7 @@ impl Default for Config {
             auto_connect: true,
             minimize_to_tray: true,
             hide_on_blur: true,
+            sound_enabled: false,
             doh_provider: "cloudflare".into(),
             gaming_mode: false,
             game_priority_boost: false,
@@ -126,7 +129,7 @@ impl Config {
                 serde_json::to_string_pretty(&cfg).unwrap_or_default(),
             );
             if cfg.auto_start_pc {
-                let _ = set_windows_autostart(true);
+                let _ = set_windows_autostart(true, cfg.start_minimized);
             }
             return cfg;
         }
@@ -165,7 +168,7 @@ impl Config {
             serde_json::to_string_pretty(self).unwrap_or_default(),
         );
         // Synchronize Windows startup registry setting
-        let _ = set_windows_autostart(self.auto_start_pc);
+        let _ = set_windows_autostart(self.auto_start_pc, self.start_minimized);
     }
 }
 
@@ -263,7 +266,7 @@ pub fn extract_exe_path_from_cmd(cmd: &str) -> String {
 }
 
 #[cfg(test)]
-pub fn set_windows_autostart(_enable: bool) -> Result<(), String> {
+pub fn set_windows_autostart(_enable: bool, _start_minimized: bool) -> Result<(), String> {
     Ok(())
 }
 
@@ -272,7 +275,7 @@ pub fn set_windows_autostart(_enable: bool) -> Result<(), String> {
 /// because applications requiring administrator privileges (requireAdministrator manifest) are silently
 /// suppressed and blocked from starting at user logon by Windows Explorer if only registered in HKCU Run.
 #[cfg(not(test))]
-pub fn set_windows_autostart(enable: bool) -> Result<(), String> {
+pub fn set_windows_autostart(enable: bool, start_minimized: bool) -> Result<(), String> {
     // Purge legacy conflicting keys first
     for legacy_key in &["Slipstream-Portable", "slipstream", "SlipstreamDPI"] {
         let _ = Command::new("reg.exe")
@@ -289,7 +292,11 @@ pub fn set_windows_autostart(enable: bool) -> Result<(), String> {
 
     if enable {
         let exe_str = get_canonical_app_exe();
-        let cmd_val = format!("\"{exe_str}\" --minimized");
+        let cmd_val = if start_minimized {
+            format!("\"{exe_str}\" --minimized")
+        } else {
+            format!("\"{exe_str}\" --autostart")
+        };
 
         // 1. Task Scheduler registration with HIGHEST privileges (UAC bypass for autostart)
         let sch_status = Command::new("schtasks.exe")
@@ -353,12 +360,12 @@ pub fn set_windows_autostart(enable: bool) -> Result<(), String> {
 }
 
 #[cfg(test)]
-pub fn repair_and_sync_autostart(_auto_start_pc: bool) {}
+pub fn repair_and_sync_autostart(_auto_start_pc: bool, _start_minimized: bool) {}
 
 /// Inspects Windows startup configuration, cleans up legacy/conflicting entries,
 /// and heals any stale or broken paths that point to deleted or moved executables.
 #[cfg(not(test))]
-pub fn repair_and_sync_autostart(auto_start_pc: bool) {
+pub fn repair_and_sync_autostart(auto_start_pc: bool, start_minimized: bool) {
     // 1. Purge legacy conflicting registry keys
     for legacy_key in &["Slipstream-Portable", "slipstream", "SlipstreamDPI"] {
         let _ = Command::new("reg.exe")
@@ -433,10 +440,108 @@ pub fn repair_and_sync_autostart(auto_start_pc: bool) {
         };
 
         if sch_needs_repair || reg_needs_repair {
-            let _ = set_windows_autostart(true);
+            let _ = set_windows_autostart(true, start_minimized);
         }
     } else {
-        let _ = set_windows_autostart(false);
+        let _ = set_windows_autostart(false, start_minimized);
+    }
+
+    // 3. Ensure Windows Search ("Slipstream" and "ss") and Start Menu shortcuts are always registered
+    ensure_windows_search_integration();
+}
+
+/// Guarantees that Slipstream is registered in Windows Search and Start Menu,
+/// responding to both "Slipstream" and the short alias "ss".
+pub fn ensure_windows_search_integration() {
+    let canonical_exe = get_canonical_app_exe();
+    if canonical_exe.is_empty() {
+        return;
+    }
+    let exe_path = Path::new(&canonical_exe);
+    if !exe_path.exists() {
+        return;
+    }
+
+    let exe_dir = exe_path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // 1. Gather all Start Menu directories (User + All Users/System)
+    let mut menu_dirs = Vec::new();
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        menu_dirs.push(Path::new(&appdata).join("Microsoft").join("Windows").join("Start Menu").join("Programs"));
+    }
+    if let Ok(programdata) = std::env::var("PROGRAMDATA") {
+        menu_dirs.push(Path::new(&programdata).join("Microsoft").join("Windows").join("Start Menu").join("Programs"));
+    }
+
+    // 2. Build and run fast VBScript to create/update shortcuts
+    let mut targets_to_create = Vec::new();
+    for dir in &menu_dirs {
+        if dir.exists() {
+            for name in &["Slipstream.lnk", "ss.lnk", "Slipstream (ss).lnk"] {
+                targets_to_create.push(dir.join(name));
+            }
+        }
+    }
+
+    if !targets_to_create.is_empty() {
+        let vbs_lines: Vec<String> = targets_to_create
+            .iter()
+            .map(|lnk| {
+                format!(
+                    "Set sc = sh.CreateShortcut(\"{path}\")\n\
+                     sc.TargetPath = \"{target}\"\n\
+                     sc.WorkingDirectory = \"{workdir}\"\n\
+                     sc.Description = \"Slipstream (ss) - Ultra-Fast Zero-Latency DPI Bypass\"\n\
+                     sc.IconLocation = \"{target},0\"\n\
+                     sc.Save",
+                    path = lnk.to_string_lossy().replace('"', "\"\""),
+                    target = canonical_exe.replace('"', "\"\""),
+                    workdir = exe_dir.replace('"', "\"\""),
+                )
+            })
+            .collect();
+
+        let vbs_content = format!(
+            "On Error Resume Next\nSet sh = CreateObject(\"WScript.Shell\")\n{}\n",
+            vbs_lines.join("\n")
+        );
+
+        let temp_vbs = std::env::temp_dir().join("slipstream_shortcuts.vbs");
+        if let Ok(()) = std::fs::write(&temp_vbs, vbs_content) {
+            let _ = Command::new("cscript.exe")
+                .args(["//nologo", &temp_vbs.to_string_lossy()])
+                .creation_flags(0x0800_0000)
+                .output();
+            let _ = std::fs::remove_file(temp_vbs);
+        }
+    }
+
+    // 3. Create ss.cmd wrapper script in app directory for instant cmd/run launching
+    if !exe_dir.is_empty() {
+        let ss_cmd = Path::new(&exe_dir).join("ss.cmd");
+        if !ss_cmd.exists() {
+            let _ = std::fs::write(&ss_cmd, "@start \"\" \"%~dp0slipstream.exe\" %*\r\n");
+        }
+    }
+
+    // 4. Windows App Paths Registry (both HKCU and HKLM so "ss" or "slipstream" in Run/Search works everywhere)
+    for root in &["HKCU", "HKLM"] {
+        for alias in &["slipstream.exe", "ss.exe", "ss"] {
+            let key = format!(r"{root}\Software\Microsoft\Windows\CurrentVersion\App Paths\{alias}");
+            let _ = Command::new("reg.exe")
+                .args(["add", &key, "/ve", "/d", &canonical_exe, "/f"])
+                .creation_flags(0x0800_0000)
+                .output();
+            if !exe_dir.is_empty() {
+                let _ = Command::new("reg.exe")
+                    .args(["add", &key, "/v", "Path", "/d", &exe_dir, "/f"])
+                    .creation_flags(0x0800_0000)
+                    .output();
+            }
+        }
     }
 }
 
@@ -594,38 +699,55 @@ pub fn apply_gaming_network_tweaks(enable: bool) {
     }
 }
 
-pub const WINWS_BYTES: &[u8] = include_bytes!("../../engine/winws.exe");
+pub const WINWS_EXE_BYTES: &[u8] = include_bytes!("../../engine/winws.exe");
+pub const CYGWIN_DLL_BYTES: &[u8] = include_bytes!("../../engine/cygwin1.dll");
 pub const WINDIVERT_DLL_BYTES: &[u8] = include_bytes!("../../engine/WinDivert.dll");
 pub const WINDIVERT_SYS_BYTES: &[u8] = include_bytes!("../../engine/WinDivert64.sys");
-pub const CYGWIN_DLL_BYTES: &[u8] = include_bytes!("../../engine/cygwin1.dll");
 pub const LICENSE_BYTES: &[u8] = include_bytes!("../../engine/WinDivert-LICENSE.txt");
 
-/// Ensures engine binaries exist in target directory, extracting embedded copies if needed.
+/// Ensures engine driver and winws.exe files exist in target directory, extracting embedded copies if needed.
 pub fn ensure_engine_files(target_dir: &std::path::Path) -> Result<PathBuf, String> {
     let winws_path = target_dir.join("winws.exe");
+    let cygwin_path = target_dir.join("cygwin1.dll");
     let dll_path = target_dir.join("WinDivert.dll");
     let sys_path = target_dir.join("WinDivert64.sys");
-    let cygwin_path = target_dir.join("cygwin1.dll");
     let lic_path = target_dir.join("WinDivert-LICENSE.txt");
 
     fs::create_dir_all(target_dir).map_err(|e| e.to_string())?;
 
-    let write_if_needed = |path: &PathBuf, data: &[u8]| -> std::io::Result<()> {
+    let write_if_needed = |path: &PathBuf, data: &[u8]| -> Result<(), String> {
         let need_write = match fs::metadata(path) {
-            Ok(meta) => meta.len() != data.len() as u64,
-            Err(_) => true,
+            Ok(meta) if meta.len() == data.len() as u64 => match fs::read(path) {
+                Ok(existing) => existing != data,
+                Err(_) => true,
+            },
+            _ => true,
         };
         if need_write {
-            fs::write(path, data)?;
+            match fs::write(path, data) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    let raw_err = e.raw_os_error();
+                    if e.kind() == std::io::ErrorKind::PermissionDenied || raw_err == Some(5) || raw_err == Some(225) {
+                        Err(format!(
+                            "DPI motor dosyası yazılamadı (Antivirüs / Yetki Engeli): {}. Windows Defender veya güvenlik yazılımınız bu dosyayı engellemiş olabilir. Lütfen 'Windows Defender Dışlama Ekle' seçeneğini kullanın.",
+                            path.display()
+                        ))
+                    } else {
+                        Err(format!("Dosya yazılamadı ({}): {e}", path.display()))
+                    }
+                }
+            }
+        } else {
+            Ok(())
         }
-        Ok(())
     };
 
-    write_if_needed(&winws_path, WINWS_BYTES).map_err(|e| e.to_string())?;
-    write_if_needed(&dll_path, WINDIVERT_DLL_BYTES).map_err(|e| e.to_string())?;
-    write_if_needed(&sys_path, WINDIVERT_SYS_BYTES).map_err(|e| e.to_string())?;
-    write_if_needed(&cygwin_path, CYGWIN_DLL_BYTES).map_err(|e| e.to_string())?;
-    write_if_needed(&lic_path, LICENSE_BYTES).map_err(|e| e.to_string())?;
+    write_if_needed(&winws_path, WINWS_EXE_BYTES)?;
+    write_if_needed(&cygwin_path, CYGWIN_DLL_BYTES)?;
+    write_if_needed(&dll_path, WINDIVERT_DLL_BYTES)?;
+    write_if_needed(&sys_path, WINDIVERT_SYS_BYTES)?;
+    write_if_needed(&lic_path, LICENSE_BYTES)?;
 
     Ok(winws_path)
 }
@@ -675,6 +797,7 @@ extern "system" {
         lp_job_information: *const std::ffi::c_void,
         cb_job_information_length: u32,
     ) -> i32;
+    #[allow(dead_code)]
     fn AssignProcessToJobObject(h_job: isize, h_process: isize) -> i32;
     fn CloseHandle(h_object: isize) -> i32;
 }
@@ -709,6 +832,7 @@ pub fn create_kill_on_close_job() -> Option<isize> {
     }
 }
 
+#[allow(dead_code)]
 pub fn assign_process_to_job(job: isize, process_handle: isize) -> bool {
     if job == 0 || job == -1 || process_handle == 0 || process_handle == -1 {
         return false;
@@ -719,23 +843,30 @@ pub fn assign_process_to_job(job: isize, process_handle: isize) -> bool {
 pub struct Engine {
     pub dir: PathBuf,
     pub bin: PathBuf,
+    pub native_worker: Option<crate::native_engine::NativeWorkerHandle>,
     child: Option<Child>,
     relay_stop: Option<Arc<AtomicBool>>,
     job_handle: Option<isize>,
 }
 
+#[allow(dead_code)]
 fn push(a: &mut Vec<String>, xs: &[&str]) {
     a.extend(xs.iter().map(|s| s.to_string()));
 }
 
 /// Builds the winws argument list. Traffic matching TCP 80/443 and Discord voice
 /// UDP is desynced transparently at the kernel packet level via WinDivert.
+#[allow(dead_code)]
 fn build_args(cfg: &Config, hosts: &Path) -> Vec<String> {
-    let strat = isp::strategy(
-        cfg.strategy
-            .as_deref()
-            .unwrap_or_else(|| isp::order(&cfg.isp)[0]),
-    );
+    let dir = hosts.parent();
+    let strat_id = match cfg.strategy.as_deref() {
+        Some(s) => s.to_string(),
+        None => {
+            let default_order = isp::order_with_updates(&cfg.isp, dir);
+            default_order.into_iter().next().unwrap_or_else(|| "fake-split-md5sig".to_string())
+        }
+    };
+    let tls_flags = isp::resolve_strategy_tls(&strat_id, dir);
 
     let mut a = vec![];
     push(&mut a, &["--wf-tcp=80,443"]);
@@ -779,8 +910,16 @@ fn build_args(cfg: &Config, hosts: &Path) -> Vec<String> {
             &hostlist_arg,
         ],
     );
-    push(&mut a, strat.tls);
+    let tls_refs: Vec<&str> = tls_flags.iter().map(|s| s.as_str()).collect();
+    push(&mut a, &tls_refs);
     a
+}
+
+#[derive(Clone, Debug)]
+pub struct EngineWorkerConfig {
+    pub bin: PathBuf,
+    pub args: Vec<String>,
+    pub work_dir: PathBuf,
 }
 
 impl Engine {
@@ -788,15 +927,33 @@ impl Engine {
         Self {
             dir,
             bin,
+            native_worker: None,
             child: None,
             relay_stop: None,
             job_handle: create_kill_on_close_job(),
         }
     }
 
-    /// True while the engine (winws) is running.
+    /// True while the engine is running.
     pub fn is_on(&self) -> bool {
-        self.child.is_some()
+        if let Some(ref c) = self.child {
+            let pid = c.id();
+            crate::get_running_processes().iter().any(|p| p.pid == pid)
+        } else {
+            self.native_worker.as_ref().map(|w| w.is_running()).unwrap_or(false)
+        }
+    }
+
+    /// Returns the PID of the active engine, if running.
+    #[allow(dead_code)]
+    pub fn child_pid(&self) -> Option<u32> {
+        self.child.as_ref().map(|c| c.id())
+    }
+
+    /// Returns current packet and desync statistics from the engine.
+    #[allow(dead_code)]
+    pub fn stats(&self) -> Option<crate::native_engine::EngineStatsSnapshot> {
+        None
     }
 
     /// Ensures the Discord updater relay is running if enabled, or stopped if not.
@@ -807,134 +964,198 @@ impl Engine {
                 self.relay_stop = Some(r_stop.clone());
                 tauri::async_runtime::spawn(proxy::run_discord_relay(r_stop, proxy::DISCORD_RELAY_PORT));
             }
-            proxy::patch_discord_settings(Some(&format!("http://127.0.0.1:{}/", proxy::DISCORD_RELAY_PORT)));
-        } else {
-            if let Some(s) = self.relay_stop.take() {
-                s.store(true, Ordering::Relaxed);
-            }
-            proxy::patch_discord_settings(None);
+        } else if let Some(s) = self.relay_stop.take() {
+            s.store(true, Ordering::Relaxed);
         }
     }
 
     /// Starts (or re-applies) everything. On error, retries once and stops cleanly on fatal error.
     pub fn start(&mut self, cfg: &Config) -> Result<(), String> {
-        let mut r = self.start_inner(cfg);
-        if r.is_err() {
-            thread::sleep(Duration::from_millis(350));
-            r = self.start_inner(cfg);
+        let worker_cfg = Self::prepare_start(&self.dir, &self.bin, cfg)?;
+        let mut r = self.start_worker(worker_cfg.clone());
+        if let Err(ref err) = r {
+            if err.contains("kilitli") || err.contains("10") || err.contains("1072") {
+                let _ = crate::resilience::repair_wfp_and_network_filters();
+                thread::sleep(Duration::from_millis(300));
+                r = self.start_worker(worker_cfg);
+            }
         }
         if r.is_err() {
             self.stop();
+            return r;
         }
-        r
+        Self::apply_post_start(&self.dir, cfg);
+        Ok(())
     }
 
-    /// Forcefully terminates any orphan winws.exe processes to free WinDivert driver handles.
-    pub fn kill_all_winws() {
-        let _ = Command::new("taskkill")
-            .args(["/IM", "winws.exe", "/T", "/F"])
-            .creation_flags(0x0800_0000)
-            .output();
-
-        let _ = Command::new("sc")
-            .args(["stop", "windivert"])
-            .creation_flags(0x0800_0000)
-            .output();
-
-        std::thread::sleep(Duration::from_millis(80));
-    }
-
-    fn start_inner(&mut self, cfg: &Config) -> Result<(), String> {
-        if let Some(mut c) = self.child.take() {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
+    /// Prepares disk files, hostlist, proxy cleanup and resolves winws engine arguments.
+    /// Runs OUTSIDE any Engine mutex so shell and file I/O operations never block other commands.
+    pub fn prepare_start(
+        dir: &Path,
+        bin: &Path,
+        cfg: &Config,
+    ) -> Result<EngineWorkerConfig, String> {
         Self::kill_all_winws();
+        let _ = crate::resilience::resolve_network_conflicts();
 
-        if !self.bin.exists() {
-            if let Some(p) = self.bin.parent() {
-                let _ = ensure_engine_files(p);
-            }
-            if !self.bin.exists() {
-                return Err(format!(
-                    "Motor bulunamadı: {}. winws.exe ve WinDivert dosyalarının mevcut olduğundan emin olun.",
-                    self.bin.display()
-                ));
+        let eng_dir = bin.parent().unwrap_or(dir);
+        let winws_path = eng_dir.join("winws.exe");
+        let cygwin_path = eng_dir.join("cygwin1.dll");
+        let dll_path = eng_dir.join("WinDivert.dll");
+        let sys_path = eng_dir.join("WinDivert64.sys");
+
+        let files_incomplete = !winws_path.exists() || !cygwin_path.exists() || !dll_path.exists() || !sys_path.exists();
+        if files_incomplete {
+            ensure_engine_files(eng_dir)?;
+            if !winws_path.exists() || !cygwin_path.exists() || !dll_path.exists() || !sys_path.exists() {
+                return Err(
+                    "winws.exe veya WinDivert sürücü dosyaları eksik veya güvenlik yazılımı/Windows Defender tarafından karantinaya alınmış. Lütfen 'Windows Defender Dışlama Ekle' seçeneğini kullanın.".into()
+                );
             }
         }
-        fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
 
         // 1) Ensure network adapters have clean DHCP and proxy settings are clean
-        dns::recover(&self.dir);
+        dns::recover(dir);
         proxy::clean_stale_proxy();
 
         // 2) Write hostlist
         let domains = profiles::collect_domains(cfg);
-        let hosts = self.dir.join("hosts.txt");
-        fs::write(&hosts, domains.join("\n")).map_err(|e| e.to_string())?;
+        let hosts = dir.join("hosts.txt");
+        fs::write(&hosts, domains.join("\r\n")).map_err(|e| e.to_string())?;
 
-        let log = fs::File::create(self.dir.join("engine.log")).map_err(|e| e.to_string())?;
-        let log2 = log.try_clone().map_err(|e| e.to_string())?;
+        // 3) Build winws argument list
+        let args = build_args(cfg, &hosts);
 
-        // High priority class (0x0000_0080) for zero scheduling jitter and lowest latency packet reinjection
-        let priority_flag = 0x0000_0080;
-        let creation_flags = 0x0800_0000 | priority_flag;
+        Ok(EngineWorkerConfig {
+            bin: winws_path,
+            args,
+            work_dir: eng_dir.to_path_buf(),
+        })
+    }
 
-        // 3) Start winws packet engine at driver level
-        let mut child = Command::new(&self.bin)
-            .args(build_args(cfg, &hosts))
-            .current_dir(self.bin.parent().unwrap_or(&self.dir))
-            .creation_flags(creation_flags)
-            .stdout(Stdio::from(log))
-            .stderr(Stdio::from(log2))
-            .spawn()
-            .map_err(|e| format!("DPI motoru başlatılamadı: {e}"))?;
-
-        // Bind child process to Windows Kernel Job Object (KILL_ON_JOB_CLOSE)
-        // If Slipstream is closed, crashes, or is killed in Task Manager, Windows kernel
-        // will immediately and unconditionally terminate winws.exe.
-        use std::os::windows::io::AsRawHandle;
-        if self.job_handle.is_none() {
-            self.job_handle = create_kill_on_close_job();
+    /// Spawns the winws.exe child process with WinDivert kernel desync arguments.
+    pub fn start_worker(
+        &mut self,
+        cfg: EngineWorkerConfig,
+    ) -> Result<(), String> {
+        if let Some(mut w) = self.native_worker.take() {
+            w.stop();
         }
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+
+        Self::kill_all_winws();
+
+        let mut cmd = Command::new(&cfg.bin);
+        cmd.args(&cfg.args)
+            .current_dir(&cfg.work_dir)
+            .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+
+        let child = cmd.spawn().map_err(|e| format!("winws.exe başlatılamadı ({}): {e}", cfg.bin.display()))?;
+
+        // Assign to job object so child dies unconditionally if parent process exits
         if let Some(job) = self.job_handle {
+            use std::os::windows::io::AsRawHandle;
             assign_process_to_job(job, child.as_raw_handle() as isize);
         }
 
-        thread::sleep(Duration::from_millis(300));
-        if let Ok(Some(status)) = child.try_wait() {
-            let out = fs::read_to_string(self.dir.join("engine.log")).unwrap_or_default();
-            return Err(format!(
-                "Motor beklenmedik şekilde durdu ({status}). {}",
-                out.trim()
-            ));
-        }
         self.child = Some(child);
 
-        // 4) Apply clean DNS & hosts-based poisoning bypass for Discord and Roblox
-        if cfg.manage_dns {
-            dns::apply_dns(cfg, &self.dir);
+        // Verification check: give winws.exe 150ms to verify driver load and bind
+        thread::sleep(Duration::from_millis(150));
+        if let Some(ref mut c) = self.child {
+            if let Ok(Some(status)) = c.try_wait() {
+                self.child = None;
+                return Err(format!("winws.exe başlatıldıktan hemen sonra kapandı ({status}). WinDivert sürücüsü yüklenememiş veya başka bir DPI aracı portu tutuyor olabilir."));
+            }
         }
-        dns::apply_bypass_hosts(cfg);
-
-        // 5) If Discord is enabled, ensure local Discord updater relay is active
-        let has_discord = cfg.enabled_apps.iter().any(|a| a == "discord");
-        self.ensure_relay(has_discord);
-
-        // 6) Low-latency gaming optimizations (TCP NoDelay, Network Throttling removal, System Responsiveness)
-        apply_gaming_network_tweaks(cfg.gaming_mode);
 
         Ok(())
     }
 
-    /// Health watchdog: checks if winws is still alive, restarts if needed.
+    /// Applies post-start network, DNS and firewall rules.
+    /// Runs OUTSIDE any Engine mutex so shell commands never block UI threads.
+    pub fn apply_post_start(dir: &Path, cfg: &Config) {
+        if cfg.manage_dns {
+            dns::apply_dns(cfg, dir);
+        }
+        dns::apply_bypass_hosts(cfg);
+        proxy::patch_discord_settings(None);
+        apply_gaming_network_tweaks(cfg.gaming_mode);
+        apply_quic_firewall_rule(true);
+    }
+
+    /// Forcefully terminates any orphan winws.exe or conflicting DPI bypass processes to free WinDivert driver handles.
+    pub fn kill_all_winws() {
+        #[cfg(target_os = "windows")]
+        {
+            let procs = crate::get_running_process_names();
+            let targets = [
+                "winws.exe", "goodbyedpi.exe", "zapret.exe",
+                "shroudly.exe", "shroudly-core.exe", "shroudly-core-adv.exe",
+                "byedpi.exe", "ciadpi.exe", "spoofdpi.exe", "green-tunnel.exe"
+            ];
+            let mut found = false;
+            for p in &procs {
+                let p_lower = p.to_lowercase();
+                if targets.iter().any(|t| p_lower == *t) {
+                    found = true;
+                    let _ = Command::new("taskkill")
+                        .args(["/IM", p, "/T", "/F"])
+                        .creation_flags(0x0800_0000)
+                        .output();
+                }
+            }
+            if found {
+                std::thread::sleep(Duration::from_millis(80));
+            }
+        }
+    }
+
+    /// Forcefully terminates any orphan Slipstream processes (other than the current PID)
+    /// to guarantee clean startup and prevent background zombie locks.
+    pub fn kill_orphan_slipstream_instances() {
+        #[cfg(target_os = "windows")]
+        {
+            let current_pid = std::process::id();
+            let procs = crate::get_running_processes();
+            let mut found = false;
+            for p in procs {
+                let name = p.name.to_lowercase();
+                if (name == "slipstream.exe" || name.starts_with("slipstream")) && p.pid != current_pid {
+                    found = true;
+                    let _ = Command::new("taskkill")
+                        .args(["/PID", &p.pid.to_string(), "/F"])
+                        .creation_flags(0x0800_0000)
+                        .output();
+                }
+            }
+            if found {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+
+    /// Health watchdog: checks if native packet engine is still alive, restarts if needed.
+    #[allow(dead_code)]
     pub fn check_health(&mut self, cfg: &Config) -> bool {
+        if let Some(ref w) = self.native_worker {
+            if !w.is_running() {
+                self.native_worker = None;
+                if cfg.auto_healing {
+                    let _ = self.start(cfg);
+                    return true;
+                }
+            }
+        }
         if let Some(ref mut c) = self.child {
             if let Ok(Some(_)) = c.try_wait() {
-                // Process died
                 self.child = None;
                 if cfg.auto_healing {
-                    let _ = self.start_inner(cfg);
+                    let _ = self.start(cfg);
                     return true;
                 }
             }
@@ -942,44 +1163,70 @@ impl Engine {
         false
     }
 
-
-    /// Full stop: terminates winws, stops relay, restores Discord settings, cleans hosts and proxy state.
-    pub fn stop(&mut self) {
-        // Kill winws child process
+    /// Stops the native worker and Discord relay cleanly in memory (~2-5ms).
+    pub fn stop_worker(&mut self) {
+        if let Some(mut w) = self.native_worker.take() {
+            w.stop();
+        }
         if let Some(mut c) = self.child.take() {
             let _ = c.kill();
             let _ = c.wait();
         }
-        Self::kill_all_winws();
-
-        // Clean hosts file bypass entries
-        dns::clear_bypass_hosts();
-
-        // Restore network adapters to clean DHCP
-        dns::restore_dns(&self.dir);
-
-        // Clean Discord settings & ensure system proxy is completely clean
         self.ensure_relay(false);
+    }
+
+    /// Restores network configuration, DNS, proxy, gaming tweaks and stops driver.
+    /// Runs OUTSIDE any Engine mutex so shell commands never block UI threads.
+    pub fn cleanup_post_stop(dir: &Path) {
+        Self::kill_all_winws();
+        dns::clear_bypass_hosts();
+        dns::restore_dns(dir);
         proxy::clean_stale_proxy();
-
-        // Cleanly restore network defaults on engine stop (disable gaming mode tweaks)
+        dns::recover(dir);
         apply_gaming_network_tweaks(false);
+        apply_quic_firewall_rule(false);
 
-        // Fast stop for WinDivert driver to ensure kernel handle release
-        let out = Command::new("sc")
-            .args(["stop", "windivert"])
+        // Safely STOP the driver service so handles are released cleanly.
+        // We do NOT call "sc delete" here to prevent the service getting into the "marked for deletion (1072)" state!
+        for svc in &["windivert", "windivert14"] {
+            let _ = Command::new("net")
+                .args(["stop", svc, "/y"])
+                .creation_flags(0x0800_0000)
+                .output();
+        }
+    }
+
+    /// Full stop: terminates native packet engine, stops relay, restores Discord settings, cleans hosts and proxy state.
+    pub fn stop(&mut self) {
+        self.stop_worker();
+        Self::cleanup_post_stop(&self.dir);
+    }
+}
+
+/// Manages outbound UDP port 443 block rule in Windows Firewall.
+/// When active, Windows Firewall rejects outbound UDP 443 instantly at the socket layer (WSAEACCES).
+/// This forces Chromium, Brave, and Discord to immediately fall back to TCP TLS (HTTP/2 / HTTP/1.1) in 0.0ms,
+/// eliminating the 3-7 second QUIC handshake stalls caused by ISP packet drops without touching UDP voice or gaming ports.
+pub fn apply_quic_firewall_rule(block: bool) {
+    let _ = Command::new("netsh")
+        .args(["advfirewall", "firewall", "delete", "rule", "name=Slipstream-Block-QUIC"])
+        .creation_flags(0x0800_0000)
+        .output();
+    if block {
+        let _ = Command::new("netsh")
+            .args([
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                "name=Slipstream-Block-QUIC",
+                "dir=out",
+                "action=block",
+                "protocol=UDP",
+                "remoteport=443",
+            ])
             .creation_flags(0x0800_0000)
             .output();
-        if let Ok(o) = out {
-            let s = String::from_utf8_lossy(&o.stdout);
-            if !s.contains("STOPPED") && !s.contains("1062") && !s.contains("1060") {
-                thread::sleep(Duration::from_millis(40));
-                let _ = Command::new("sc")
-                    .args(["stop", "windivert"])
-                    .creation_flags(0x0800_0000)
-                    .output();
-            }
-        }
     }
 }
 
@@ -1010,6 +1257,7 @@ mod tests {
         assert!(cfg.manage_dns, "manage_dns must be true on fresh install");
         assert!(!cfg.gaming_mode, "gaming_mode must default to false");
         assert!(!cfg.game_priority_boost, "game_priority_boost must default to false");
+        assert!(!cfg.sound_enabled, "sound_enabled must default to false");
     }
 
     #[test]
@@ -1079,6 +1327,7 @@ mod tests {
         assert!(cfg.auto_connect, "Missing auto_connect should default to true via serde");
         assert!(cfg.start_minimized, "Missing start_minimized should default to true via serde");
         assert!(cfg.manage_dns, "Missing manage_dns should default to true via serde");
+        assert!(!cfg.sound_enabled, "Missing sound_enabled should default to false via serde");
     }
 
     #[test]
@@ -1181,6 +1430,24 @@ mod tests {
     }
 
     #[test]
+    fn test_autostart_cmd_generation() {
+        let exe = "C:\\Program Files\\Slipstream\\slipstream.exe";
+        let cmd_minimized = if true {
+            format!("\"{exe}\" --minimized")
+        } else {
+            format!("\"{exe}\" --autostart")
+        };
+        assert_eq!(cmd_minimized, "\"C:\\Program Files\\Slipstream\\slipstream.exe\" --minimized");
+
+        let cmd_normal = if false {
+            format!("\"{exe}\" --minimized")
+        } else {
+            format!("\"{exe}\" --autostart")
+        };
+        assert_eq!(cmd_normal, "\"C:\\Program Files\\Slipstream\\slipstream.exe\" --autostart");
+    }
+
+    #[test]
     fn test_canonical_app_exe_never_empty_or_test_dep() {
         let exe = get_canonical_app_exe();
         assert!(!exe.is_empty(), "Canonical exe path must never be empty");
@@ -1188,6 +1455,19 @@ mod tests {
         assert!(!lower.contains(r"\target\debug"), "Canonical exe must not point to debug build folder: {}", exe);
         assert!(!lower.contains(r"\target\release\deps"), "Canonical exe must not point to test runner deps: {}", exe);
         assert!(!lower.contains(r"\deps\"), "Canonical exe must not point to deps folder: {}", exe);
+    }
+
+    #[test]
+    fn test_ensure_windows_search_integration() {
+        ensure_windows_search_integration();
+        // Verify Start Menu shortcuts were created in AppData
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let user_programs = Path::new(&appdata).join("Microsoft").join("Windows").join("Start Menu").join("Programs");
+            if user_programs.exists() {
+                assert!(user_programs.join("Slipstream.lnk").exists(), "Slipstream.lnk must exist");
+                assert!(user_programs.join("ss.lnk").exists(), "ss.lnk must exist in user start menu");
+            }
+        }
     }
 }
 

@@ -43,6 +43,39 @@ fn get_dns_cache() -> &'static DnsCache {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+type RelayClientCache = Mutex<HashMap<(String, Ipv4Addr), reqwest::Client>>;
+
+fn get_relay_client_cache() -> &'static RelayClientCache {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<RelayClientCache> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn get_or_create_relay_client(target_host: &str, target_ip: Ipv4Addr) -> Result<reqwest::Client, String> {
+    let key = (target_host.to_string(), target_ip);
+    {
+        let cache = get_relay_client_cache().lock().unwrap();
+        if let Some(client) = cache.get(&key) {
+            return Ok(client.clone());
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve(target_host, SocketAddr::new(IpAddr::V4(target_ip), 443))
+        .connect_timeout(Duration::from_secs(10))
+        .tcp_nodelay(true)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .pool_max_idle_per_host(10)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut cache = get_relay_client_cache().lock().unwrap();
+    cache.insert(key, client.clone());
+    Ok(client)
+}
+
 #[derive(serde::Deserialize)]
 struct DohResponse {
     #[serde(rename = "Status")]
@@ -243,6 +276,8 @@ pub fn clean_stale_proxy() {
         InternetSetOptionW(std::ptr::null_mut(), INTERNET_OPTION_SETTINGS_CHANGED, std::ptr::null_mut(), 0);
         InternetSetOptionW(std::ptr::null_mut(), INTERNET_OPTION_REFRESH, std::ptr::null_mut(), 0);
     }
+
+    patch_discord_settings(None);
 }
 
 /// Discord settings locations on Windows.
@@ -276,6 +311,19 @@ pub fn patch_discord_settings(endpoint: Option<&str>) {
             obj["NEW_UPDATE_ENDPOINT"] = serde_json::Value::String(url.to_string());
         } else if let Some(map) = obj.as_object_mut() {
             map.remove("NEW_UPDATE_ENDPOINT");
+            map.remove("UPDATE_ENDPOINT");
+            map.remove("PROXY_SERVER");
+            map.remove("PROXY_BYPASS_LIST");
+            map.remove("DPI");
+            map.remove("DPI_SETTING");
+
+            map.retain(|_, val| {
+                if let Some(s) = val.as_str() {
+                    !s.contains("18809") && !s.contains("127.0.0.1:18809") && !s.contains("localhost:18809")
+                } else {
+                    true
+                }
+            });
         }
 
         if let Ok(json_str) = serde_json::to_string_pretty(&obj) {
@@ -327,12 +375,16 @@ fn rewrite_discord_urls(text: &str, port: u16) -> String {
     result
 }
 
-/// Checks if Discord.exe or Update.exe is currently running.
+/// Checks if Discord.exe is currently running.
 pub fn is_discord_running() -> bool {
     let procs = crate::get_running_process_names();
     procs.iter().any(|p| {
         let l = p.to_lowercase();
-        l.contains("discord.exe") || l.contains("update.exe") || l == "discord"
+        l == "discord.exe"
+            || l == "discordptb.exe"
+            || l == "discordcanary.exe"
+            || l == "discorddevelopment.exe"
+            || (l.starts_with("discord") && l.ends_with(".exe"))
     })
 }
 
@@ -361,6 +413,58 @@ pub fn probe_discord_connectivity() -> bool {
         if let Ok(addr) = addr_str.parse::<SocketAddr>() {
             if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(1500)).is_ok() {
                 return true;
+            }
+        }
+    }
+    false
+}
+
+/// Checks if Discord has a stalled or invalid gateway session in renderer_js.log within the last 60 seconds.
+pub fn has_discord_stalled_session() -> bool {
+    let mut log_paths = vec![];
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let base = PathBuf::from(appdata);
+        for dir in ["discord", "discordptb", "discordcanary", "discorddevelopment"] {
+            let p = base.join(dir).join("logs").join("renderer_js.log");
+            if p.exists() {
+                log_paths.push(p);
+            }
+        }
+    }
+
+    for path in log_paths {
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if let Ok(modified) = meta.modified() {
+                if let Ok(elapsed) = modified.elapsed() {
+                    // Check only if the log was modified recently (within 90s)
+                    if elapsed < Duration::from_secs(90) {
+                        use std::io::{Read, Seek, SeekFrom};
+                        if let Ok(mut f) = std::fs::File::open(&path) {
+                            let len = meta.len();
+                            let read_len = len.min(16384);
+                            if f.seek(SeekFrom::End(-(read_len as i64))).is_ok() {
+                                let mut buf = vec![0u8; read_len as usize];
+                                if f.read_exact(&mut buf).is_ok() {
+                                    let chunk = String::from_utf8_lossy(&buf);
+                                    let lines: Vec<&str> = chunk.lines().collect();
+                                    let tail_lines = if lines.len() > 30 {
+                                        &lines[lines.len() - 30..]
+                                    } else {
+                                        &lines[..]
+                                    };
+
+                                    let has_invalid_session = tail_lines.iter().any(|l| l.contains("INVALID_SESSION"));
+                                    let has_ready_after = tail_lines.iter().rev().take_while(|l| !l.contains("INVALID_SESSION")).any(|l| l.contains("[READY]"));
+
+                                    // If INVALID_SESSION occurred and has NOT yet been followed by a successful READY:
+                                    if has_invalid_session && !has_ready_after {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -423,37 +527,144 @@ pub fn is_discord_failing() -> bool {
     !probe_discord_connectivity()
 }
 
-/// Restarts Discord cleanly using Update.exe so it connects cleanly.
-pub fn restart_discord() {
-    let _ = Command::new("taskkill")
-        .args(["/IM", "Discord.exe", "/T", "/F"])
-        .creation_flags(0x0800_0000)
-        .output();
-    let _ = Command::new("taskkill")
-        .args(["/IM", "Update.exe", "/T", "/F"])
-        .creation_flags(0x0800_0000)
-        .output();
+/// Completely resets, repairs, and cleanly restarts Discord: terminates lingering processes,
+/// purges corrupted Squirrel packages and temp files, clears corrupted Electron GPU/Code/Web caches,
+/// resets stale or broken NEW_UPDATE_ENDPOINT in settings.json, flushes DNS, and cleanly relaunches Discord.
+pub fn repair_and_restart_discord() -> Result<(), String> {
+    let targets = [
+        "Discord.exe",
+        "DiscordPTB.exe",
+        "DiscordCanary.exe",
+        "DiscordDevelopment.exe",
+        "Update.exe",
+    ];
+    for exe in targets {
+        let _ = Command::new("taskkill")
+            .args(["/IM", exe, "/T", "/F"])
+            .creation_flags(0x0800_0000)
+            .output();
+    }
 
-    for _ in 0..12 {
+    for _ in 0..25 {
         if !is_discord_running() {
             break;
         }
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(80));
     }
 
-    crate::dns::flush();
+    // 1. Reset stale or corrupted NEW_UPDATE_ENDPOINT and proxy settings in %APPDATA%\<discord variants>\settings.json
+    patch_discord_settings(None);
 
+    // 2. Clear corrupted Squirrel packages and updater temp files in %LOCALAPPDATA%
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        let discord_dir = PathBuf::from(&local).join("Discord");
-        let update_exe = discord_dir.join("Update.exe");
-        if update_exe.exists() {
-            let _ = Command::new(&update_exe)
-                .args(["--processStart", "Discord.exe"])
-                .current_dir(&discord_dir)
-                .creation_flags(0x0800_0000)
-                .spawn();
+        let base = PathBuf::from(local);
+        for dir in ["Discord", "DiscordPTB", "DiscordCanary", "DiscordDevelopment"] {
+            let discord_dir = base.join(dir);
+            let packages_dir = discord_dir.join("packages");
+            if packages_dir.exists() {
+                // Delete partial or corrupted update packages (.nupkg, .delta)
+                if let Ok(entries) = std::fs::read_dir(&packages_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                            let ext_lower = ext.to_lowercase();
+                            if ext_lower == "nupkg" || ext_lower == "delta" || ext_lower == "tmp" {
+                                let _ = std::fs::remove_file(&path);
+                            }
+                        }
+                    }
+                }
+            }
+            let temp_dir = discord_dir.join("SquirrelTemp");
+            if temp_dir.exists() {
+                let _ = std::fs::remove_dir_all(&temp_dir);
+            }
         }
     }
+
+    // 3. Clear corrupted Electron webview and GPU caches in %APPDATA%
+    if let Ok(roaming) = std::env::var("APPDATA") {
+        let base = PathBuf::from(roaming);
+        for dir in ["discord", "discordptb", "discordcanary", "discorddevelopment"] {
+            let discord_roaming = base.join(dir);
+            for cache_folder in [
+                "Cache",
+                "Code Cache",
+                "GPUCache",
+                "DawnGraphiteCache",
+                "DawnWebGPUCache",
+            ] {
+                let p = discord_roaming.join(cache_folder);
+                if p.exists() {
+                    let _ = std::fs::remove_dir_all(&p);
+                }
+            }
+        }
+    }
+
+    // 4. Flush Windows DNS resolver cache
+    crate::dns::flush();
+
+    // 5. Cleanly relaunch Discord via detected installation path without suppressing GUI window
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        let base = PathBuf::from(local);
+        for dir in ["Discord", "DiscordPTB", "DiscordCanary", "DiscordDevelopment"] {
+            let discord_dir = base.join(dir);
+            let update_exe = discord_dir.join("Update.exe");
+            let exe_name = format!("{dir}.exe");
+
+            // Look for Discord.exe in app-* subdirectories (sorted descending to pick newest version)
+            let direct_exe = if let Ok(entries) = std::fs::read_dir(&discord_dir) {
+                let mut app_dirs: Vec<PathBuf> = entries
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        p.is_dir()
+                            && p.file_name()
+                                .and_then(|n| n.to_str())
+                                .map(|n| n.starts_with("app-"))
+                                .unwrap_or(false)
+                    })
+                    .collect();
+                app_dirs.sort_by(|a, b| b.cmp(a));
+                app_dirs.into_iter().map(|p| p.join(&exe_name)).find(|p| p.exists())
+            } else {
+                None
+            };
+
+            // Preferred: launch via Update.exe --processStart Discord.exe without hiding console/window
+            if update_exe.exists() {
+                let child = Command::new(&update_exe)
+                    .args(["--processStart", &exe_name])
+                    .current_dir(&discord_dir)
+                    .spawn();
+                if let Ok(c) = child {
+                    drop(c);
+                    return Ok(());
+                }
+            }
+
+            // Fallback: direct exe spawn without hiding console/window
+            if let Some(exe_path) = direct_exe {
+                let parent = exe_path.parent().unwrap_or(&discord_dir);
+                let child = Command::new(&exe_path)
+                    .current_dir(parent)
+                    .spawn();
+                if let Ok(c) = child {
+                    drop(c);
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Restarts Discord cleanly using repair_and_restart_discord.
+#[allow(dead_code)]
+pub fn restart_discord() {
+    let _ = repair_and_restart_discord();
 }
 
 fn bind_reusable_listener(port: u16) -> Result<tokio::net::TcpListener, String> {
@@ -574,13 +785,7 @@ pub async fn run_discord_relay(stop: Arc<AtomicBool>, port: u16) {
                 }
             };
 
-            let client = match reqwest::Client::builder()
-                .no_proxy()
-                .redirect(reqwest::redirect::Policy::none())
-                .resolve(target_host, SocketAddr::new(IpAddr::V4(target_ip), 443))
-                .connect_timeout(Duration::from_secs(10))
-                .build()
-            {
+            let client = match get_or_create_relay_client(target_host, target_ip) {
                 Ok(c) => c,
                 Err(_) => {
                     let _ = client_sock
@@ -735,32 +940,33 @@ pub struct DohBenchmarkResult {
 
 /// Benchmarks all supported DoH DNS providers via direct low-level TCP handshake.
 pub async fn benchmark_doh_providers() -> Vec<DohBenchmarkResult> {
-    let targets = [
-        ("cloudflare", "Cloudflare (1.1.1.1)", "1.1.1.1:443"),
-        ("google", "Google DNS (8.8.8.8)", "8.8.8.8:443"),
-        ("quad9", "Quad9 (9.9.9.9)", "9.9.9.9:443"),
-        ("adguard", "AdGuard (94.140.14.14)", "94.140.14.14:443"),
-        ("yandex", "Yandex DNS (77.88.8.8)", "77.88.8.8:443"),
-    ];
-
-    let mut list = Vec::new();
-    for (id, display_name, addr_str) in targets {
-        let addr: SocketAddr = match addr_str.parse() {
-            Ok(a) => a,
-            Err(_) => continue,
+    async fn probe(id: &'static str, name: &'static str, addr_str: &'static str) -> DohBenchmarkResult {
+        let ping = match addr_str.parse::<SocketAddr>() {
+            Ok(addr) => {
+                let start = Instant::now();
+                match tokio::time::timeout(Duration::from_millis(1500), tokio::net::TcpStream::connect(addr)).await {
+                    Ok(Ok(_)) => Some(start.elapsed().as_millis() as u64),
+                    _ => None,
+                }
+            }
+            Err(_) => None,
         };
-        let start = Instant::now();
-        let ping = match tokio::time::timeout(Duration::from_millis(2000), tokio::net::TcpStream::connect(addr)).await {
-            Ok(Ok(_)) => Some(start.elapsed().as_millis() as u64),
-            _ => None,
-        };
-        list.push(DohBenchmarkResult {
+        DohBenchmarkResult {
             provider: id.to_string(),
-            name: display_name.to_string(),
+            name: name.to_string(),
             latency: ping,
-        });
+        }
     }
-    list
+
+    let (r1, r2, r3, r4, r5) = tokio::join!(
+        probe("cloudflare", "Cloudflare (1.1.1.1)", "1.1.1.1:443"),
+        probe("google", "Google DNS (8.8.8.8)", "8.8.8.8:443"),
+        probe("quad9", "Quad9 (9.9.9.9)", "9.9.9.9:443"),
+        probe("adguard", "AdGuard (94.140.14.14)", "94.140.14.14:443"),
+        probe("yandex", "Yandex DNS (77.88.8.8)", "77.88.8.8:443"),
+    );
+
+    vec![r1, r2, r3, r4, r5]
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
@@ -773,16 +979,19 @@ pub struct DiscordDiagnosis {
 
 /// Inspects Discord updater configuration, running processes, and local relay health.
 pub async fn diagnose_discord() -> DiscordDiagnosis {
-    let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
-    let installed = PathBuf::from(&local).join("Discord").join("Update.exe").exists();
-
-    let patched = discord_settings_paths().iter().any(|p| {
-        std::fs::read_to_string(p)
-            .map(|s| s.contains("18809"))
-            .unwrap_or(false)
-    });
-
-    let running = is_discord_running();
+    let (installed, patched, running) = tokio::task::spawn_blocking(|| {
+        let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
+        let inst = PathBuf::from(&local).join("Discord").join("Update.exe").exists();
+        let ptch = !discord_settings_paths().iter().any(|p| {
+            std::fs::read_to_string(p)
+                .map(|s| s.contains("NEW_UPDATE_ENDPOINT") || s.contains("PROXY_SERVER") || s.contains("18809"))
+                .unwrap_or(false)
+        });
+        let run = is_discord_running();
+        (inst, ptch, run)
+    })
+    .await
+    .unwrap_or((false, false, false));
 
     let relay_ok = tokio::time::timeout(
         Duration::from_millis(400),
@@ -800,18 +1009,10 @@ pub async fn diagnose_discord() -> DiscordDiagnosis {
     }
 }
 
-/// Completely repairs Discord by patching NEW_UPDATE_ENDPOINT to the relay, flushing DNS, and cleanly relaunching.
+/// Completely repairs Discord by clearing stale endpoints, flushing DNS, and cleanly relaunching.
+#[allow(dead_code)]
 pub fn repair_discord() -> Result<(), String> {
-    // 1. Ensure Discord settings are patched with the relay URL
-    patch_discord_settings(Some(&format!("http://127.0.0.1:{}/", DISCORD_RELAY_PORT)));
-
-    // 2. Flush DNS
-    flush_dns_cache();
-
-    // 3. Restart Discord cleanly
-    restart_discord();
-
-    Ok(())
+    repair_and_restart_discord()
 }
 
 #[derive(serde::Serialize, Clone, Debug)]

@@ -1,6 +1,6 @@
 {
   "productName": "Slipstream",
-  "version": "0.2.7",
+  "version": "0.3.7",
   "identifier": "app.slipstream.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: ipc: http://ipc.localhost;"
     }
   },
   "bundle": {

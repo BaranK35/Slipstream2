@@ -3,8 +3,10 @@ mod apps;
 mod dns;
 mod engine;
 mod isp;
+pub mod native_engine;
 mod profiles;
 mod proxy;
+mod resilience;
 mod sound;
 
 use engine::{Config, Engine};
@@ -12,7 +14,9 @@ use serde_json::json;
 use std::{
     error::Error,
     net::{IpAddr, SocketAddr},
+    os::windows::process::CommandExt,
     path::PathBuf,
+    process::Command,
     sync::{
         atomic::{AtomicBool, AtomicI64, Ordering},
         Mutex,
@@ -36,6 +40,20 @@ static COLLAPSED_ORIGIN_X: std::sync::atomic::AtomicI32 = std::sync::atomic::Ato
 static SINGLE_INSTANCE_MUTEX: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 static LAST_APPLY_UPDATE_MS: AtomicI64 = AtomicI64::new(0);
 
+pub fn release_single_instance_mutex() {
+    let old = SINGLE_INSTANCE_MUTEX.swap(0, Ordering::SeqCst);
+    if old != 0 {
+        #[cfg(target_os = "windows")]
+        unsafe {
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn CloseHandle(hObject: isize) -> i32;
+            }
+            CloseHandle(old);
+        }
+    }
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -43,47 +61,63 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
+static ENGINE_IS_ON: AtomicBool = AtomicBool::new(false);
+static OP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 struct AppState {
+    dir: PathBuf,
+    bin: PathBuf,
     engine: Mutex<Engine>,
 }
 
 #[tauri::command]
-fn catalog() -> serde_json::Value {
-    json!({ "isps": isp::ISPS, "apps": profiles::APPS, "strategies": isp::STRATEGIES })
+fn catalog(s: State<'_, AppState>) -> serde_json::Value {
+    let strats = isp::get_all_strategies(Some(&s.dir));
+    let isps = isp::get_all_isps(Some(&s.dir));
+    json!({ "isps": isps, "apps": profiles::APPS, "strategies": strats })
 }
 
 #[tauri::command]
 fn load_config(s: State<AppState>) -> Config {
-    let cfg = Config::load(&s.engine.lock().unwrap().dir);
+    let cfg = Config::load(&s.dir);
     HIDE_ON_BLUR.store(cfg.hide_on_blur, Ordering::SeqCst);
     MINIMIZE_TO_TRAY.store(cfg.minimize_to_tray, Ordering::SeqCst);
+    sound::set_enabled(cfg.sound_enabled);
     cfg
 }
 
 #[tauri::command]
 fn get_config(s: State<AppState>) -> Config {
-    let cfg = Config::load(&s.engine.lock().unwrap().dir);
+    let cfg = Config::load(&s.dir);
     HIDE_ON_BLUR.store(cfg.hide_on_blur, Ordering::SeqCst);
     MINIMIZE_TO_TRAY.store(cfg.minimize_to_tray, Ordering::SeqCst);
+    sound::set_enabled(cfg.sound_enabled);
     cfg
 }
 
 #[tauri::command]
-fn save_config(s: State<AppState>, cfg: Config) {
+async fn save_config(s: State<'_, AppState>, cfg: Config) -> Result<(), String> {
     HIDE_ON_BLUR.store(cfg.hide_on_blur, Ordering::SeqCst);
     MINIMIZE_TO_TRAY.store(cfg.minimize_to_tray, Ordering::SeqCst);
-    let is_on = s.engine.lock().unwrap().is_on();
-    if is_on {
-        engine::apply_gaming_network_tweaks(cfg.gaming_mode);
-        if cfg.game_priority_boost {
-            manage_game_process_priorities(&cfg, &get_running_processes());
+    sound::set_enabled(cfg.sound_enabled);
+    let is_on = ENGINE_IS_ON.load(Ordering::SeqCst);
+    let dir = s.dir.clone();
+    let cfg_clone = cfg.clone();
+    tokio::task::spawn_blocking(move || {
+        if is_on {
+            engine::apply_gaming_network_tweaks(cfg_clone.gaming_mode);
+            if cfg_clone.game_priority_boost {
+                manage_game_process_priorities(&cfg_clone, &get_running_processes());
+            } else {
+                restore_all_boosted_game_priorities();
+            }
         } else {
             restore_all_boosted_game_priorities();
         }
-    } else {
-        restore_all_boosted_game_priorities();
-    }
-    cfg.save(&s.engine.lock().unwrap().dir);
+        cfg_clone.save(&dir);
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -92,37 +126,97 @@ fn set_hide_on_blur(enabled: bool) {
 }
 
 #[tauri::command]
-fn is_engine_on(s: State<AppState>) -> bool {
-    s.engine.lock().unwrap().is_on()
+fn is_engine_on(_s: State<AppState>) -> bool {
+    ENGINE_IS_ON.load(Ordering::SeqCst)
 }
 
 #[tauri::command]
 async fn start(app: tauri::AppHandle, s: State<'_, AppState>, cfg: Config) -> Result<(), String> {
-    let res = s.engine.lock().unwrap().start(&cfg);
-    if res.is_ok() {
-        if cfg.game_priority_boost {
-            manage_game_process_priorities(&cfg, &get_running_processes());
+    let _guard = OP_LOCK.lock().await;
+
+    let dir = s.dir.clone();
+    let bin = s.bin.clone();
+    let cfg_clone = cfg.clone();
+    let app_handle = app.clone();
+
+    tokio::task::spawn_blocking(move || {
+        // Phase 1: Pre-start system preparation (kill conflicts, clean proxy, write hosts) outside engine lock
+        let native_cfg = Engine::prepare_start(&dir, &bin, &cfg_clone)?;
+
+        // Phase 2: Start worker - engine mutex held for ~10ms only!
+        let start_res = if let Some(state) = app_handle.try_state::<AppState>() {
+            let mut eng = state.engine.lock().unwrap();
+            eng.start_worker(native_cfg.clone())
+        } else {
+            Err("AppState bulunamadı".to_string())
+        };
+
+        if let Err(err) = start_res {
+            if err.contains("kilitli") || err.contains("10") || err.contains("1072") {
+                let _ = resilience::repair_wfp_and_network_filters();
+                std::thread::sleep(Duration::from_millis(300));
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    let mut eng = state.engine.lock().unwrap();
+                    eng.start_worker(native_cfg)?;
+                }
+            } else {
+                return Err(err);
+            }
         }
-        let _ = app.emit("engine_state_changed", true);
-    }
-    res
+        ENGINE_IS_ON.store(true, Ordering::SeqCst);
+
+        // Phase 3: Post-start network config (DNS, gaming tweaks, firewall) outside engine lock
+        Engine::apply_post_start(&dir, &cfg_clone);
+
+        if cfg_clone.game_priority_boost {
+            manage_game_process_priorities(&cfg_clone, &get_running_processes());
+        }
+
+        let _ = app_handle.emit("engine_state_changed", true);
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 async fn stop(app: tauri::AppHandle, s: State<'_, AppState>) -> Result<(), String> {
-    restore_all_boosted_game_priorities();
-    s.engine.lock().unwrap().stop();
-    let _ = app.emit("engine_state_changed", false);
-    Ok(())
+    let _guard = OP_LOCK.lock().await;
+
+    let dir = s.dir.clone();
+    let app_handle = app.clone();
+
+    tokio::task::spawn_blocking(move || {
+        restore_all_boosted_game_priorities();
+
+        // Phase 1: Stop worker - engine mutex held for ~2-5ms only!
+        if let Some(state) = app_handle.try_state::<AppState>() {
+            let mut eng = state.engine.lock().unwrap();
+            eng.stop_worker();
+            ENGINE_IS_ON.store(false, Ordering::SeqCst);
+        }
+
+        // Phase 2: Cleanup system network (restore DNS, proxy, windivert driver stop) outside engine lock
+        Engine::cleanup_post_stop(&dir);
+
+        let _ = app_handle.emit("engine_state_changed", false);
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn refresh_game_priorities(cfg: Config) {
-    if cfg.game_priority_boost {
-        manage_game_process_priorities(&cfg, &get_running_processes());
-    } else {
-        restore_all_boosted_game_priorities();
-    }
+async fn refresh_game_priorities(cfg: Config) {
+    tokio::task::spawn_blocking(move || {
+        if cfg.game_priority_boost {
+            manage_game_process_priorities(&cfg, &get_running_processes());
+        } else {
+            restore_all_boosted_game_priorities();
+        }
+    })
+    .await
+    .ok();
 }
 
 #[tauri::command]
@@ -136,11 +230,10 @@ async fn diagnose_discord() -> proxy::DiscordDiagnosis {
 }
 
 #[tauri::command]
-fn repair_discord(state: State<'_, AppState>) -> Result<(), String> {
-    if let Ok(mut eng) = state.engine.lock() {
-        eng.ensure_relay(true);
-    }
-    proxy::repair_discord()
+async fn repair_discord(_state: State<'_, AppState>) -> Result<(), String> {
+    tokio::task::spawn_blocking(proxy::repair_and_restart_discord)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -148,12 +241,36 @@ async fn check_network_health(provider: String) -> proxy::NetworkHealth {
     proxy::check_network_health(&provider).await
 }
 
-#[tauri::command]
-fn hide_window(window: WebviewWindow) {
-    LAST_BLUR_HIDE_MS.store(now_ms(), std::sync::atomic::Ordering::SeqCst);
+pub fn perform_hide_window(window: &WebviewWindow) {
+    LAST_BLUR_HIDE_MS.store(now_ms(), Ordering::SeqCst);
     let _ = window.emit("app_window_visibility", false);
     let _ = window.hide();
+    #[cfg(target_os = "windows")]
+    {
+        #[link(name = "user32")]
+        extern "system" {
+            fn FindWindowW(lpClassName: *const u16, lpWindowName: *const u16) -> isize;
+            fn ShowWindow(hWnd: isize, nCmdShow: i32) -> i32;
+        }
+        let hwnd_raw = if let Ok(hwnd) = window.hwnd() {
+            hwnd.0 as isize
+        } else {
+            use std::ptr;
+            let win_name: Vec<u16> = "Slipstream\0".encode_utf16().collect();
+            unsafe { FindWindowW(ptr::null_mut(), win_name.as_ptr()) }
+        };
+        if hwnd_raw != 0 {
+            unsafe {
+                ShowWindow(hwnd_raw, 0); // SW_HIDE
+            }
+        }
+    }
     schedule_memory_trim();
+}
+
+#[tauri::command]
+fn hide_window(window: WebviewWindow) {
+    perform_hide_window(&window);
 }
 
 #[tauri::command]
@@ -488,59 +605,114 @@ fn set_window_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), Stri
     Ok(())
 }
 
-#[tauri::command]
-fn close_app(app: tauri::AppHandle, s: State<AppState>) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.hide();
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+fn full_application_shutdown(app: Option<&tauri::AppHandle>, state: Option<&AppState>) {
+    if SHUTTING_DOWN.swap(true, Ordering::SeqCst) {
+        return;
     }
-    if let Some(t) = app.get_webview_window("toast") {
-        let _ = t.hide();
+
+    // 1. Immediately hide window and tray icon so the UI vanishes with zero delay (<5ms)
+    if let Some(app) = app {
+        if let Some(w) = app.get_webview_window("main") {
+            perform_hide_window(&w);
+        }
+        if let Some(t) = app.get_webview_window("toast") {
+            let _ = t.hide();
+            let _ = t.destroy();
+        }
+        let _ = app.remove_tray_by_id("main-tray");
     }
+
+    // Unconditional safety watchdog: guarantees process termination within 800ms under all conditions
+    std::thread::spawn(|| {
+        std::thread::sleep(Duration::from_millis(800));
+        std::process::exit(0);
+    });
+
     restore_all_boosted_game_priorities();
     engine::apply_gaming_network_tweaks(false);
-    {
-        if let Ok(mut eng) = s.engine.lock() {
+
+    if let Some(state) = state {
+        if let Ok(mut eng) = state.engine.try_lock() {
             eng.ensure_relay(false);
-            eng.stop();
+            eng.stop_worker();
         }
+        ENGINE_IS_ON.store(false, Ordering::SeqCst);
+        Engine::cleanup_post_stop(&state.dir);
+    } else if let Ok(appdata) = std::env::var("APPDATA") {
+        let fallback_dir = PathBuf::from(appdata).join("app.slipstream.desktop");
+        Engine::cleanup_post_stop(&fallback_dir);
     }
+
     Engine::kill_all_winws();
-    app.exit(0);
+    engine::apply_quic_firewall_rule(false);
+    dns::clear_bypass_hosts();
+    proxy::patch_discord_settings(None);
+    proxy::clean_stale_proxy();
+    dns::flush();
+
+    // Release WinDivert driver handles and stop service safely
+    for svc in &["windivert", "windivert14"] {
+        let _ = Command::new("net")
+            .args(["stop", svc, "/y"])
+            .creation_flags(0x0800_0000)
+            .output();
+    }
+
+    if let Some(app) = app {
+        app.exit(0);
+    }
     std::process::exit(0);
 }
 
 #[tauri::command]
-fn scan_apps() -> Vec<apps::ScannedApp> {
-    let procs = get_running_process_names();
-    apps::scan_installed_and_running_apps(&procs)
+fn close_app(app: tauri::AppHandle, s: State<AppState>) {
+    full_application_shutdown(Some(&app), Some(&s));
 }
 
 #[tauri::command]
-fn pick_exe_file() -> Option<String> {
-    FILE_DIALOG_ACTIVE.store(true, Ordering::SeqCst);
-    let picked = apps::pick_exe_dialog();
-    FILE_DIALOG_ACTIVE.store(false, Ordering::SeqCst);
-    picked
+async fn scan_apps() -> Vec<apps::ScannedApp> {
+    tokio::task::spawn_blocking(|| {
+        let procs = get_running_process_names();
+        apps::scan_installed_and_running_apps(&procs)
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
-fn reset_dns() {
-    dns::reset_all_adapters();
+async fn pick_exe_file() -> Option<String> {
+    tokio::task::spawn_blocking(|| {
+        FILE_DIALOG_ACTIVE.store(true, Ordering::SeqCst);
+        let picked = apps::pick_exe_dialog();
+        FILE_DIALOG_ACTIVE.store(false, Ordering::SeqCst);
+        picked
+    })
+    .await
+    .unwrap_or(None)
 }
 
 #[tauri::command]
-fn flush_dns_cache() {
-    proxy::flush_dns_cache();
+async fn reset_dns() {
+    tokio::task::spawn_blocking(dns::reset_all_adapters).await.ok();
 }
 
 #[tauri::command]
-fn restart_discord() {
-    proxy::restart_discord();
+async fn flush_dns_cache() {
+    tokio::task::spawn_blocking(proxy::flush_dns_cache).await.ok();
 }
 
 #[tauri::command]
-fn is_discord_running() -> bool {
-    proxy::is_discord_running()
+async fn restart_discord() -> Result<(), String> {
+    tokio::task::spawn_blocking(proxy::repair_and_restart_discord)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn is_discord_running() -> bool {
+    tokio::task::spawn_blocking(proxy::is_discord_running).await.unwrap_or(false)
 }
 
 #[tauri::command]
@@ -549,8 +721,14 @@ fn expand_url(raw: String) -> Vec<String> {
 }
 
 #[tauri::command]
-fn set_autostart(enable: bool) -> Result<(), String> {
-    engine::set_windows_autostart(enable)
+async fn set_autostart(s: State<'_, AppState>, enable: bool) -> Result<(), String> {
+    let dir = s.dir.clone();
+    tokio::task::spawn_blocking(move || {
+        let cfg = Config::load(&dir);
+        engine::set_windows_autostart(enable, cfg.start_minimized)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -665,6 +843,103 @@ fn get_system_identity() -> SystemIdentity {
     }
 }
 
+#[tauri::command]
+fn check_elevation() -> bool {
+    resilience::is_elevated_admin()
+}
+
+#[tauri::command]
+fn request_elevation() -> Result<(), String> {
+    resilience::request_admin_elevation(None)
+}
+
+#[tauri::command]
+async fn check_antivirus_health(s: State<'_, AppState>) -> Result<resilience::AntivirusReport, String> {
+    let eng_dir = s.bin.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("engine"));
+    tokio::task::spawn_blocking(move || {
+        resilience::check_antivirus_status(&eng_dir)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn apply_defender_exclusions(s: State<'_, AppState>) -> Result<String, String> {
+    let eng_dir = s.bin.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("engine"));
+    let (_target_exe, install_dir) = resolve_install_paths();
+    tokio::task::spawn_blocking(move || {
+        resilience::add_defender_exclusions(&install_dir, &eng_dir)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn detect_conflicts() -> Result<Vec<resilience::NetworkConflict>, String> {
+    let own_pid = Some(std::process::id());
+    tokio::task::spawn_blocking(move || {
+        let procs = get_running_processes();
+        resilience::detect_network_conflicts(&procs, own_pid)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn resolve_conflicts() -> Result<String, String> {
+    tokio::task::spawn_blocking(resilience::resolve_network_conflicts)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn diagnose_wfp() -> resilience::WfpDiagnostics {
+    tokio::task::spawn_blocking(resilience::diagnose_wfp_health)
+        .await
+        .unwrap_or_else(|_| resilience::WfpDiagnostics {
+            bfe_running: false,
+            windivert_state: "Hata".to_string(),
+            is_healthy: false,
+            details: "Tanılama görevi tamamlanamadı.".to_string(),
+        })
+}
+
+#[tauri::command]
+async fn repair_wfp() -> Result<String, String> {
+    tokio::task::spawn_blocking(resilience::repair_wfp_and_network_filters)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn fetch_remote_isp_updates(s: State<'_, AppState>) -> Result<isp::RemoteIspUpdates, String> {
+    let dir = s.dir.clone();
+    let client = match reqwest::Client::builder()
+        .user_agent("Slipstream-Client/1.0")
+        .timeout(Duration::from_secs(8))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return Ok(isp::load_cached_updates(&dir).unwrap_or_default()),
+    };
+
+    let now_ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let update_url = format!("https://raw.githubusercontent.com/BaranK35/Slipstream2/main/isp_rules.json?t={now_ts}");
+
+    if let Ok(resp) = client.get(&update_url).send().await {
+        if resp.status().is_success() {
+            if let Ok(text) = resp.text().await {
+                if let Ok(updates) = serde_json::from_str::<isp::RemoteIspUpdates>(&text) {
+                    let _ = isp::save_cached_updates(&dir, &updates);
+                    return Ok(updates);
+                }
+            }
+        }
+    }
+
+    Ok(isp::load_cached_updates(&dir).unwrap_or_default())
+}
+
 #[derive(serde::Deserialize, Clone, Debug)]
 pub struct SendFeedbackPayload {
     pub category: String, // "bug", "feature", "general"
@@ -684,7 +959,7 @@ async fn send_discord_feedback(
         return Err("Lütfen bir açıklama veya mesaj girin.".to_string());
     }
 
-    let cfg = Config::load(&s.engine.lock().unwrap().dir);
+    let cfg = Config::load(&s.dir);
 
     let webhook_url = if let Some(ref custom) = payload.custom_webhook {
         let trimmed = custom.trim().to_string();
@@ -702,7 +977,7 @@ async fn send_discord_feedback(
     }
 
     let identity = get_system_identity();
-    let engine_active = s.engine.lock().unwrap().is_on();
+    let engine_active = ENGINE_IS_ON.load(Ordering::SeqCst);
     let strategy_id = cfg.strategy.clone().unwrap_or_else(|| "varsayılan".to_string());
     let isp_id = cfg.isp.clone();
 
@@ -714,9 +989,15 @@ async fn send_discord_feedback(
     };
 
     let sender_display = if payload.sender.trim().is_empty() {
-        format!("Anonim (Windows: {} @ {})", identity.username, identity.computer_name)
+        if payload.attach_sys_info {
+            format!("Anonim ({})", identity.short_machine_id)
+        } else {
+            "Anonim".to_string()
+        }
+    } else if payload.attach_sys_info {
+        format!("{} ({})", payload.sender.trim(), identity.short_machine_id)
     } else {
-        format!("{} (Windows: {} @ {})", payload.sender.trim(), identity.username, identity.computer_name)
+        payload.sender.trim().to_string()
     };
 
     let mut fields = Vec::new();
@@ -747,7 +1028,7 @@ async fn send_discord_feedback(
             "inline": false
         }));
 
-        let engine_dir = s.engine.lock().unwrap().dir.clone();
+        let engine_dir = s.dir.clone();
         let log_path = engine_dir.join("engine.log");
         if let Ok(log_content) = std::fs::read_to_string(&log_path) {
             let lines: Vec<&str> = log_content.lines().collect();
@@ -819,7 +1100,7 @@ pub struct ProcessItem {
 }
 
 #[cfg(target_os = "windows")]
-fn get_running_processes() -> Vec<ProcessItem> {
+pub fn get_running_processes() -> Vec<ProcessItem> {
     use std::mem;
     #[allow(non_snake_case)]
     #[repr(C)]
@@ -870,7 +1151,7 @@ fn get_running_processes() -> Vec<ProcessItem> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn get_running_processes() -> Vec<ProcessItem> {
+pub fn get_running_processes() -> Vec<ProcessItem> {
     vec![]
 }
 
@@ -929,12 +1210,13 @@ pub fn trim_all_slipstream_memory() {
 pub fn trim_all_slipstream_memory() {}
 
 pub fn schedule_memory_trim() {
-    trim_all_slipstream_memory();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        trim_all_slipstream_memory();
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-        trim_all_slipstream_memory();
+        // Debounce: do not trim immediately. Only trim if window remains hidden for 5 seconds.
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let last_hide = LAST_BLUR_HIDE_MS.load(Ordering::SeqCst);
+        if last_hide > 0 && (now_ms() - last_hide) >= 4800 {
+            let _ = tokio::task::spawn_blocking(trim_all_slipstream_memory).await;
+        }
     });
 }
 
@@ -1073,36 +1355,47 @@ fn is_game_process_running(cfg: &Config, running_procs: &[ProcessItem]) -> bool 
 }
 
 #[tauri::command]
-fn get_detected_active_apps(cfg: Config) -> Vec<String> {
-    let running_exes = get_running_process_names();
-    let running_lower: std::collections::HashSet<String> = running_exes.iter().map(|e| e.to_lowercase()).collect();
-    let mut detected = Vec::new();
+async fn get_detected_active_apps(cfg: Config) -> Vec<String> {
+    tokio::task::spawn_blocking(move || {
+        let running_exes = get_running_process_names();
+        let running_lower: std::collections::HashSet<String> = running_exes.iter().map(|e| e.to_lowercase()).collect();
+        let mut detected = Vec::new();
 
-    for profile in profiles::APPS {
-        for exe in profile.exes {
-            if running_lower.contains(&exe.to_lowercase()) {
-                detected.push(profile.id.to_string());
-                break;
+        for profile in profiles::APPS {
+            for exe in profile.exes {
+                if running_lower.contains(&exe.to_lowercase()) {
+                    detected.push(profile.id.to_string());
+                    break;
+                }
             }
         }
-    }
-    for plat in &cfg.custom_platforms {
-        if let Some(ref exe) = plat.exe_name {
-            if running_lower.contains(&exe.to_lowercase()) {
-                detected.push(plat.id.clone());
+        for plat in &cfg.custom_platforms {
+            if let Some(ref exe) = plat.exe_name {
+                if running_lower.contains(&exe.to_lowercase()) {
+                    detected.push(plat.id.clone());
+                }
             }
         }
-    }
-    detected
+        detected
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[tauri::command]
-fn is_game_running() -> bool {
-    let procs = get_running_process_names();
-    procs.iter().any(|p| {
-        let clean = p.strip_suffix(".exe").or_else(|| p.strip_suffix(".EXE")).unwrap_or(p);
-        apps::is_likely_game(clean, p, "")
+async fn is_game_running() -> bool {
+    tokio::task::spawn_blocking(|| {
+        let procs = get_running_process_names();
+        procs.iter().any(|p| {
+            if apps::is_system_process(p) {
+                return false;
+            }
+            let clean = p.strip_suffix(".exe").or_else(|| p.strip_suffix(".EXE")).unwrap_or(p);
+            apps::is_likely_game(clean, p, "")
+        })
     })
+    .await
+    .unwrap_or(false)
 }
 
 #[tauri::command]
@@ -1128,10 +1421,12 @@ async fn test_platform_latency(host: String) -> Option<u64> {
 
 #[tauri::command]
 async fn check_latency() -> serde_json::Value {
-    let discord = proxy::measure_latency("updates.discord.com", 443).await;
-    let discord_voice = proxy::measure_latency("ec2.eu-central-1.amazonaws.com", 443).await;
-    let cloudflare = proxy::measure_latency("1.1.1.1", 443).await;
-    let google = proxy::measure_latency("dns.google", 443).await;
+    let (discord, discord_voice, cloudflare, google) = tokio::join!(
+        proxy::measure_latency("updates.discord.com", 443),
+        proxy::measure_latency("ec2.eu-central-1.amazonaws.com", 443),
+        proxy::measure_latency("1.1.1.1", 443),
+        proxy::measure_latency("dns.google", 443)
+    );
     json!({
         "discord": discord,
         "discord_voice": discord_voice,
@@ -1299,7 +1594,7 @@ fn write_utf16_file(path: &std::path::Path, content: &str) -> std::io::Result<()
 }
 
 #[cfg(target_os = "windows")]
-fn query_registry_string(hkey: isize, subkey: &str, value_name: &str) -> Option<String> {
+pub fn query_registry_string(hkey: isize, subkey: &str, value_name: &str) -> Option<String> {
     #[link(name = "advapi32")]
     extern "system" {
         fn RegOpenKeyExW(
@@ -1351,6 +1646,11 @@ fn query_registry_string(hkey: isize, subkey: &str, value_name: &str) -> Option<
         let s = String::from_utf16_lossy(u16_slice);
         Some(s.trim_matches('\0').trim().to_string())
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn query_registry_string(_hkey: isize, _subkey: &str, _value_name: &str) -> Option<String> {
+    None
 }
 
 fn resolve_install_paths() -> (PathBuf, PathBuf) {
@@ -1430,85 +1730,13 @@ async fn check_for_updates() -> UpdateInfo {
         },
     };
 
-    // 1) Try raw version.json from raw.githubusercontent.com and github.com/raw with cache-busting timestamp
-    let now_ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let version_urls = [
-        format!("https://raw.githubusercontent.com/BaranK35/Slipstream2/main/version.json?t={now_ts}"),
-        format!("https://github.com/BaranK35/Slipstream2/raw/main/version.json?t={now_ts}"),
-        format!("https://raw.githubusercontent.com/BaranK35/Slipstreamtest2/main/version.json?t={now_ts}"),
-        format!("https://github.com/BaranK35/Slipstreamtest2/raw/main/version.json?t={now_ts}"),
-    ];
-
-    let mut fallback_notes = String::new();
-
-    for u in version_urls {
-        if let Ok(resp) = client
-            .get(&u)
-            .header("Cache-Control", "no-cache")
-            .header("Pragma", "no-cache")
-            .send()
-            .await
-        {
-            if resp.status().is_success() {
-                if let Ok(text) = resp.text().await {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                        if let Some(latest) = json.get("version").and_then(|v| v.as_str()) {
-                            let has = is_newer_version(latest, &current_version);
-                            let notes = json.get("notes").and_then(|v| v.as_str()).unwrap_or("Hata düzeltmeleri ve performans iyileştirmeleri.");
-                            let url = json.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                            if fallback_notes.is_empty() && !notes.trim().is_empty() {
-                                fallback_notes = notes.to_string();
-                            }
-                            if has {
-                                let mut valid_asset = false;
-                                if !url.is_empty() {
-                                    if let Ok(head) = client.head(url).send().await {
-                                        if head.status().is_success() {
-                                            let cl = head.headers()
-                                                .get("content-length")
-                                                .and_then(|v| v.to_str().ok())
-                                                .and_then(|s| s.parse::<u64>().ok())
-                                                .unwrap_or(0);
-                                            if cl >= 2_000_000 {
-                                                valid_asset = true;
-                                            }
-                                        }
-                                    }
-                                }
-                                if valid_asset {
-                                    return UpdateInfo {
-                                        has_update: true,
-                                        current_version: current_version.clone(),
-                                        latest_version: latest.to_string(),
-                                        release_notes: notes.to_string(),
-                                        download_url: url.to_string(),
-                                    };
-                                } else {
-                                    // Asset is still being uploaded, prevent update loop
-                                    return UpdateInfo {
-                                        has_update: false,
-                                        current_version: current_version.clone(),
-                                        latest_version: current_version,
-                                        release_notes: fallback_notes,
-                                        download_url: "".into(),
-                                    };
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 2) Fallback to GitHub Releases API (releases/latest)
+    // 1) First, query GitHub Releases API (authoritative source for published releases, unaffected by raw CDN caching)
     let api_urls = [
         "https://api.github.com/repos/BaranK35/Slipstream2/releases/latest",
         "https://api.github.com/repos/BaranK35/Slipstreamtest2/releases/latest",
     ];
+    let mut fallback_notes = String::new();
+
     for api_url in api_urls {
         if let Ok(resp) = client
             .get(api_url)
@@ -1561,6 +1789,69 @@ async fn check_for_updates() -> UpdateInfo {
         }
     }
 
+    // 2) Secondary fallback: version.json with cache-busting timestamp
+    let now_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let version_urls = [
+        format!("https://raw.githubusercontent.com/BaranK35/Slipstream2/main/version.json?t={now_ts}"),
+        format!("https://github.com/BaranK35/Slipstream2/raw/main/version.json?t={now_ts}"),
+        format!("https://raw.githubusercontent.com/BaranK35/Slipstreamtest2/main/version.json?t={now_ts}"),
+        format!("https://github.com/BaranK35/Slipstreamtest2/raw/main/version.json?t={now_ts}"),
+    ];
+
+    for u in version_urls {
+        if let Ok(resp) = client
+            .get(&u)
+            .header("Cache-Control", "no-cache")
+            .header("Pragma", "no-cache")
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                if let Ok(text) = resp.text().await {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if let Some(latest) = json.get("version").and_then(|v| v.as_str()) {
+                            let has = is_newer_version(latest, &current_version);
+                            let notes = json.get("notes").and_then(|v| v.as_str()).unwrap_or("Hata düzeltmeleri ve performans iyileştirmeleri.");
+                            let url = json.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                            if fallback_notes.is_empty() && !notes.trim().is_empty() {
+                                fallback_notes = notes.to_string();
+                            }
+                            if has {
+                                let mut valid_asset = false;
+                                if !url.is_empty() {
+                                    if let Ok(head) = client.head(url).send().await {
+                                        if head.status().is_success() {
+                                            let cl = head.headers()
+                                                .get("content-length")
+                                                .and_then(|v| v.to_str().ok())
+                                                .and_then(|s| s.parse::<u64>().ok())
+                                                .unwrap_or(0);
+                                            if cl >= 2_000_000 {
+                                                valid_asset = true;
+                                            }
+                                        }
+                                    }
+                                }
+                                if valid_asset {
+                                    return UpdateInfo {
+                                        has_update: true,
+                                        current_version: current_version.clone(),
+                                        latest_version: latest.to_string(),
+                                        release_notes: notes.to_string(),
+                                        download_url: url.to_string(),
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     UpdateInfo {
         has_update: false,
         current_version: current_version.clone(),
@@ -1570,24 +1861,36 @@ async fn check_for_updates() -> UpdateInfo {
     }
 }
 
-#[tauri::command]
-async fn apply_update(app: tauri::AppHandle, s: State<'_, AppState>, download_url: String) -> Result<(), String> {
+pub fn is_trusted_update_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    (lower.starts_with("https://github.com/barank35/slipstream2/releases/download/")
+        || lower.starts_with("https://github.com/barank35/slipstreamtest2/releases/download/"))
+        && lower.ends_with(".exe")
+}
+
+pub async fn execute_apply_update(app: tauri::AppHandle, _dir: PathBuf, download_url: String) -> Result<(), String> {
     if download_url.is_empty() {
         return Err("Geçerli bir indirme bağlantısı bulunamadı.".into());
     }
 
+    if !is_trusted_update_url(&download_url) {
+        return Err("Güvenlik ihlali: Güncelleme paketi yalnızca resmi Slipstream GitHub deposundan indirilebilir.".into());
+    }
+
     let now = now_ms();
     let last = LAST_APPLY_UPDATE_MS.load(Ordering::SeqCst);
-    if last > 0 && (now - last) < 180_000 {
-        return Err("Güncelleme işlemi çok yakın zamanda başlatıldı. Lütfen bekleyin.".into());
+    if last > 0 && (now - last) < 5_000 {
+        return Err("Güncelleme işlemi başlatılıyor, lütfen bekleyin...".into());
     }
     LAST_APPLY_UPDATE_MS.store(now, Ordering::SeqCst);
 
     let client = reqwest::Client::builder()
         .user_agent("Slipstream-Updater/1.0")
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())?;
+
+    let _ = app.emit("update_status", "downloading");
 
     let resp = match client.get(&download_url).send().await {
         Ok(r) if r.status().is_success() => Ok(r),
@@ -1613,18 +1916,29 @@ async fn apply_update(app: tauri::AppHandle, s: State<'_, AppState>, download_ur
         return Err("İndirilen güncelleme paketi eksik veya henüz GitHub üzerinde tamamlanmadı.".into());
     }
 
-    let temp_dir = std::env::temp_dir();
-    let installer_path = temp_dir.join("Slipstream-Update.exe");
-    std::fs::write(&installer_path, bytes).map_err(|e| e.to_string())?;
+    let _ = app.emit("update_status", "installing");
 
-    let (target_exe, install_dir) = resolve_install_paths();
+    // Acquire OP_LOCK only after bytes are fully downloaded
+    let _guard = OP_LOCK.lock().await;
 
-    // 1) Stop DPI engine and Discord relay cleanly in this process before spawning updater
-    {
-        let mut eng = s.engine.lock().unwrap();
-        eng.ensure_relay(false);
-        eng.stop();
-    }
+    // Explicitly release single instance mutex so installer doesn't see a running locked instance
+    release_single_instance_mutex();
+
+    let app_h = app.clone();
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let temp_dir = std::env::temp_dir();
+        let installer_path = temp_dir.join("Slipstream-Update.exe");
+        std::fs::write(&installer_path, bytes).map_err(|e| e.to_string())?;
+
+        let (target_exe, install_dir) = resolve_install_paths();
+
+        // 1) Stop DPI engine worker quickly (~2ms) in memory before launching installer
+        if let Some(state) = app_h.try_state::<AppState>() {
+            let mut eng = state.engine.lock().unwrap();
+            eng.ensure_relay(false);
+            eng.stop_worker();
+            ENGINE_IS_ON.store(false, Ordering::SeqCst);
+        }
 
     #[cfg(target_os = "windows")]
     {
@@ -1650,8 +1964,11 @@ async fn apply_update(app: tauri::AppHandle, s: State<'_, AppState>, download_ur
             $installDir = '{dir}';\
             $installer = '{inst}';\
             $parentPid = {pid};\
-            if ($parentPid -gt 0) {{ Wait-Process -Id $parentPid -Timeout 6 -ErrorAction SilentlyContinue; }}\
+            if ($parentPid -gt 0) {{ Wait-Process -Id $parentPid -Timeout 5 -ErrorAction SilentlyContinue; }}\
             Stop-Process -Name 'slipstream', 'winws' -Force -ErrorAction SilentlyContinue;\
+            taskkill.exe /F /IM slipstream.exe /T 2>$null;\
+            taskkill.exe /F /IM winws.exe /T 2>$null;\
+            Start-Sleep -Milliseconds 500;\
             $unlocked = $false;\
             for ($i = 0; $i -lt 30; $i++) {{\
                 try {{\
@@ -1765,9 +2082,120 @@ async fn apply_update(app: tauri::AppHandle, s: State<'_, AppState>, download_ur
             let _ = std::fs::remove_file(old_cmd);
         }
     }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
+    // Fast-exit to let updater script take over immediately without deadlocking
+    if let Some(w) = app.get_webview_window("main") {
+        perform_hide_window(&w);
+    }
+    let _ = app.remove_tray_by_id("main-tray");
     app.exit(0);
     std::process::exit(0);
+}
+
+#[tauri::command]
+async fn apply_update(app: tauri::AppHandle, s: State<'_, AppState>, download_url: String) -> Result<(), String> {
+    execute_apply_update(app, s.dir.clone(), download_url).await
+}
+
+static LAST_NOTIFIED_VERSION: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn notify_update_found(app: &tauri::AppHandle, dir: &PathBuf, info: &UpdateInfo, _is_cold_start: bool) {
+    let _ = app.emit("update_available", info.clone());
+
+    let should_notify = {
+        let mut last = LAST_NOTIFIED_VERSION.lock().unwrap();
+        if last.as_deref() != Some(&info.latest_version) {
+            *last = Some(info.latest_version.clone());
+            true
+        } else {
+            false
+        }
+    };
+
+    let cfg = Config::load(dir);
+
+    if should_notify {
+        let msg = if cfg.auto_update {
+            format!("Slipstream v{} güncellemesi otomatik uygulanıyor...", info.latest_version)
+        } else {
+            format!("Yeni bir güncelleme mevcut (v{}). İncelemek veya güncellemek için tıklayın.", info.latest_version)
+        };
+        show_toast_notification(app.clone(), Some(msg));
+    }
+
+    if cfg.auto_update && !info.download_url.is_empty() {
+        let app_cl = app.clone();
+        let dir_cl = dir.clone();
+        let url = info.download_url.clone();
+        tauri::async_runtime::spawn(async move {
+            let is_game = is_game_running().await;
+            if !is_game {
+                let _ = execute_apply_update(app_cl, dir_cl, url).await;
+            }
+        });
+    }
+}
+
+pub fn start_live_sse_update_listener(app: tauri::AppHandle, dir: PathBuf) {
+    tauri::async_runtime::spawn(async move {
+        let client = match reqwest::Client::builder()
+            .user_agent("Slipstream-LiveUpdater/1.0")
+            .tcp_keepalive(Duration::from_secs(45))
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        let sse_url = "https://ntfy.sh/slipstream_live_updates_bk35/sse";
+
+        loop {
+            match client.get(sse_url).header("Accept", "text/event-stream").send().await {
+                Ok(mut resp) => {
+                    let mut line_buffer = String::new();
+                    // Read SSE stream chunks with timeout to detect half-closed sockets
+                    loop {
+                        let chunk_res = tokio::time::timeout(Duration::from_secs(75), resp.chunk()).await;
+                        match chunk_res {
+                            Ok(Ok(Some(chunk))) => {
+                                if let Ok(text) = std::str::from_utf8(&chunk) {
+                                    line_buffer.push_str(text);
+                                    if line_buffer.contains("event: message") || line_buffer.contains("\"event\":\"message\"") {
+                                        line_buffer.clear();
+                                        // Received instant live push notification! Check version immediately!
+                                        let info = check_for_updates().await;
+                                        if info.has_update {
+                                            notify_update_found(&app, &dir, &info, false);
+                                        }
+                                    }
+                                }
+                            }
+                            Ok(Ok(None)) => {
+                                // Stream ended normally from server, reconnect
+                                break;
+                            }
+                            Ok(Err(_)) => {
+                                // Network or stream error, reconnect
+                                break;
+                            }
+                            Err(_) => {
+                                // 75-second read timeout (server keep-alive missed), break and reconnect cleanly
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+    });
 }
 
 /// Comprehensive Auto-Tune: Tests major services live against each candidate strategy,
@@ -1778,6 +2206,8 @@ async fn autotune(
     s: State<'_, AppState>,
     mut cfg: Config,
 ) -> Result<Option<String>, String> {
+    let _guard = OP_LOCK.lock().await;
+
     // Benchmark targets covering active user services
     let mut targets = Vec::new();
     if cfg.enabled_apps.iter().any(|a| a == "discord") {
@@ -1802,7 +2232,9 @@ async fn autotune(
         targets.push("https://discord.com".to_string());
     }
 
-    let candidate_ids = isp::order(&cfg.isp);
+    let eng_dir = Some(s.dir.as_path());
+    let candidate_ids = isp::order_with_updates(&cfg.isp, eng_dir);
+    let all_strats = isp::get_all_strategies(eng_dir);
     let mut best_id: Option<String> = None;
     let mut best_score = -1;
     let mut best_latency = u64::MAX;
@@ -1812,12 +2244,29 @@ async fn autotune(
     let _ = app.emit("autotune", format!("🚀 En iyi ayar testi başlatıldı: {total} kritik servis canlı test edilecek."));
 
     for id in candidate_ids {
-        let name = isp::strategy(id).name;
+        let name = all_strats
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| id.clone());
         let _ = app.emit("autotune", format!("⚡ Deneniyor: {name}..."));
-        cfg.strategy = Some(id.to_string());
-        {
-            s.engine.lock().unwrap().start(&cfg)?;
-        }
+        cfg.strategy = Some(id.clone());
+        let dir = s.dir.clone();
+        let bin = s.bin.clone();
+        let cfg_cl = cfg.clone();
+        let app_h = app.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Ok(native_cfg) = Engine::prepare_start(&dir, &bin, &cfg_cl) {
+                if let Some(state) = app_h.try_state::<AppState>() {
+                    let mut eng = state.engine.lock().unwrap();
+                    let _ = eng.start_worker(native_cfg);
+                    ENGINE_IS_ON.store(true, Ordering::SeqCst);
+                }
+                Engine::apply_post_start(&dir, &cfg_cl);
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?;
         tokio::time::sleep(Duration::from_millis(600)).await;
 
         let mut success_count = 0;
@@ -1860,15 +2309,43 @@ async fn autotune(
 
     if let Some(winner) = best_id {
         cfg.strategy = Some(winner.clone());
-        s.engine.lock().unwrap().start(&cfg)?;
-        cfg.save(&s.engine.lock().unwrap().dir);
+        let dir = s.dir.clone();
+        let bin = s.bin.clone();
+        let cfg_cl = cfg.clone();
+        let app_h = app.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Ok(native_cfg) = Engine::prepare_start(&dir, &bin, &cfg_cl) {
+                if let Some(state) = app_h.try_state::<AppState>() {
+                    let mut eng = state.engine.lock().unwrap();
+                    let _ = eng.start_worker(native_cfg);
+                    ENGINE_IS_ON.store(true, Ordering::SeqCst);
+                }
+                Engine::apply_post_start(&dir, &cfg_cl);
+                cfg_cl.save(&dir);
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?;
         let _ = app.emit(
             "autotune",
             format!("🏆 Mükemmel strateji bulundu ve aktif edildi: {best_name} ({best_score}/{total} servis, {best_latency}ms)"),
         );
+        let _ = app.emit("engine_state_changed", true);
         Ok(Some(winner))
     } else {
-        s.engine.lock().unwrap().stop();
+        let dir = s.dir.clone();
+        let app_h = app.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Some(state) = app_h.try_state::<AppState>() {
+                let mut eng = state.engine.lock().unwrap();
+                eng.stop_worker();
+                ENGINE_IS_ON.store(false, Ordering::SeqCst);
+            }
+            Engine::cleanup_post_stop(&dir);
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        let _ = app.emit("engine_state_changed", false);
         Ok(None)
     }
 }
@@ -1894,8 +2371,7 @@ fn position_bottom_right(w: &WebviewWindow) -> Result<(), Box<dyn std::error::Er
 }
 
 #[cfg(target_os = "windows")]
-fn force_bring_to_front(_w: &WebviewWindow) {
-    use std::ptr;
+fn force_bring_to_front(w: &WebviewWindow) {
     #[link(name = "user32")]
     extern "system" {
         fn FindWindowW(lpClassName: *const u16, lpWindowName: *const u16) -> isize;
@@ -1912,16 +2388,21 @@ fn force_bring_to_front(_w: &WebviewWindow) {
     const SWP_NOSIZE: u32 = 0x0001;
     const SWP_SHOWWINDOW: u32 = 0x0040;
 
-    let win_name: Vec<u16> = "Slipstream\0".encode_utf16().collect();
-    let hwnd = unsafe { FindWindowW(ptr::null_mut(), win_name.as_ptr()) };
-    if hwnd != 0 {
+    let hwnd_raw = if let Ok(h) = w.hwnd() {
+        h.0 as isize
+    } else {
+        use std::ptr;
+        let win_name: Vec<u16> = "Slipstream\0".encode_utf16().collect();
+        unsafe { FindWindowW(ptr::null_mut(), win_name.as_ptr()) }
+    };
+    if hwnd_raw != 0 {
         unsafe {
-            ShowWindow(hwnd, SW_RESTORE);
-            ShowWindow(hwnd, SW_SHOW);
-            BringWindowToTop(hwnd);
-            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-            SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-            SetForegroundWindow(hwnd);
+            ShowWindow(hwnd_raw, SW_RESTORE);
+            ShowWindow(hwnd_raw, SW_SHOW);
+            BringWindowToTop(hwnd_raw);
+            SetWindowPos(hwnd_raw, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            SetWindowPos(hwnd_raw, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+            SetForegroundWindow(hwnd_raw);
         }
     }
 }
@@ -1999,47 +2480,60 @@ fn hide_toast_notification(app: tauri::AppHandle) {
     schedule_memory_trim();
 }
 
+static CURRENT_TOAST_MESSAGE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+#[tauri::command]
+fn get_initial_toast_message() -> Option<String> {
+    CURRENT_TOAST_MESSAGE.lock().unwrap().clone()
+}
+
 #[tauri::command]
 fn show_toast_notification(app: tauri::AppHandle, message: Option<String>) {
-    if let Some(toast_w) = app.get_webview_window("toast") {
-        let _ = position_toast_bottom_right(&toast_w);
-        if let Some(ref msg) = message {
-            let _ = toast_w.emit("toast_message", msg.clone());
-        }
-        let _ = toast_w.show();
-    } else if let Ok(toast_w) = tauri::WebviewWindowBuilder::new(
-        &app,
-        "toast",
-        tauri::WebviewUrl::App("index.html?toast=1".into()),
-    )
-    .title("Slipstream Bildirim")
-    .inner_size(360.0, 92.0)
-    .resizable(false)
-    .decorations(false)
-    .transparent(true)
-    .skip_taskbar(true)
-    .always_on_top(true)
-    .visible(false)
-    .build()
-    {
-        let _ = position_toast_bottom_right(&toast_w);
-        if let Some(ref msg) = message {
-            let _ = toast_w.emit("toast_message", msg.clone());
-        }
-        let _ = toast_w.show();
+    let app_handle = app.clone();
+    let msg_clone = message.clone();
+    if let Some(ref m) = message {
+        *CURRENT_TOAST_MESSAGE.lock().unwrap() = Some(m.clone());
     }
+
+    let _ = app.run_on_main_thread(move || {
+        if let Some(toast_w) = app_handle.get_webview_window("toast") {
+            let _ = position_toast_bottom_right(&toast_w);
+            if let Some(ref msg) = msg_clone {
+                let _ = toast_w.emit("toast_message", msg.clone());
+            }
+            let _ = toast_w.show();
+            let _ = toast_w.set_always_on_top(true);
+        } else if let Ok(toast_w) = tauri::WebviewWindowBuilder::new(
+            &app_handle,
+            "toast",
+            tauri::WebviewUrl::App("index.html?toast=1".into()),
+        )
+        .title("Slipstream Bildirim")
+        .inner_size(360.0, 92.0)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .skip_taskbar(true)
+        .always_on_top(true)
+        .visible(false)
+        .build()
+        {
+            let _ = position_toast_bottom_right(&toast_w);
+            if let Some(ref msg) = msg_clone {
+                let _ = toast_w.emit("toast_message", msg.clone());
+            }
+            let _ = toast_w.show();
+            let _ = toast_w.set_always_on_top(true);
+        }
+    });
 }
 
 fn toggle_window(w: &WebviewWindow) {
     let is_vis = w.is_visible().unwrap_or(false);
-    let is_focused = w.is_focused().unwrap_or(false);
     let is_min = w.is_minimized().unwrap_or(false);
 
-    if is_vis && is_focused && !is_min {
-        LAST_BLUR_HIDE_MS.store(now_ms(), Ordering::SeqCst);
-        let _ = w.emit("app_window_visibility", false);
-        let _ = w.hide();
-        schedule_memory_trim();
+    if is_vis && !is_min {
+        perform_hide_window(w);
     } else {
         let _ = position_bottom_right(w);
         let _ = w.emit("app_window_visibility", true);
@@ -2062,40 +2556,59 @@ fn main() {
             fn SetEvent(hEvent: isize) -> i32;
             fn CloseHandle(hObject: isize) -> i32;
         }
-        #[link(name = "user32")]
-        extern "system" {
-            fn FindWindowW(lpClassName: *const u16, lpWindowName: *const u16) -> isize;
-            fn SetForegroundWindow(hWnd: isize) -> i32;
-            fn ShowWindow(hWnd: isize, nCmdShow: i32) -> i32;
-        }
 
         let mutex_name: Vec<u16> = "Local\\Slipstream_SingleInstance_Mutex\0".encode_utf16().collect();
         let event_name: Vec<u16> = "Local\\Slipstream_Wakeup_Event\0".encode_utf16().collect();
 
-        let mutex_handle = unsafe { CreateMutexW(ptr::null_mut(), 1, mutex_name.as_ptr()) };
+        let args: Vec<String> = std::env::args().collect();
+        let is_takeover = args.iter().any(|a| a == "--elevated-takeover");
+
+        let mut mutex_handle = unsafe { CreateMutexW(ptr::null_mut(), 1, mutex_name.as_ptr()) };
         const ERROR_ALREADY_EXISTS: u32 = 183;
-        if mutex_handle != 0 && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-            // Another instance is already running!
-            let ev_handle = unsafe { CreateEventW(ptr::null_mut(), 0, 0, event_name.as_ptr()) };
-            if ev_handle != 0 {
-                unsafe {
-                    SetEvent(ev_handle);
-                    CloseHandle(ev_handle);
+
+        if is_takeover && mutex_handle != 0 && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            unsafe { CloseHandle(mutex_handle) };
+            mutex_handle = 0;
+            // Wait up to 1500ms for old un-elevated instance to close and release mutex
+            for _ in 0..30 {
+                std::thread::sleep(Duration::from_millis(50));
+                let h = unsafe { CreateMutexW(ptr::null_mut(), 1, mutex_name.as_ptr()) };
+                if h != 0 && unsafe { GetLastError() } != ERROR_ALREADY_EXISTS {
+                    mutex_handle = h;
+                    break;
+                }
+                if h != 0 {
+                    unsafe { CloseHandle(h) };
                 }
             }
-            let win_name: Vec<u16> = "Slipstream\0".encode_utf16().collect();
-            let hwnd = unsafe { FindWindowW(ptr::null_mut(), win_name.as_ptr()) };
-            if hwnd != 0 {
-                unsafe {
-                    ShowWindow(hwnd, 9); // SW_RESTORE
-                    SetForegroundWindow(hwnd);
+        }
+
+        let is_background_launch = args.iter().any(|a| a == "--minimized" || a == "--autostart" || a == "-silent");
+
+        if mutex_handle != 0 && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+            // Another instance is already running!
+            // Only signal the wakeup event if this is an interactive user launch (NOT an autostart or minimized background launch)
+            if !is_background_launch {
+                let ev_handle = unsafe { CreateEventW(ptr::null_mut(), 0, 0, event_name.as_ptr()) };
+                if ev_handle != 0 {
+                    unsafe {
+                        SetEvent(ev_handle);
+                        CloseHandle(ev_handle);
+                    }
                 }
             }
             std::process::exit(0);
         }
         SINGLE_INSTANCE_MUTEX.store(mutex_handle, Ordering::SeqCst);
-        // Forcefully eliminate any orphaned winws.exe instances left over from previous sessions
+        // Forcefully eliminate any orphaned winws.exe or zombie slipstream instances left over from previous sessions
         Engine::kill_all_winws();
+        Engine::kill_orphan_slipstream_instances();
+    }
+
+    // Pre-flight check: Microsoft Edge WebView2 Runtime verification & auto-repair
+    if let Err(e) = resilience::ensure_webview2_runtime() {
+        eprintln!("WebView2 Runtime hatası: {e}");
+        std::process::exit(1);
     }
 
     tauri::Builder::default()
@@ -2119,6 +2632,9 @@ fn main() {
                         loop {
                             let wait_res = unsafe { WaitForSingleObject(ev_handle, INFINITE) };
                             if wait_res == 0 {
+                                if let Some(toast_w) = app_handle.get_webview_window("toast") {
+                                    let _ = toast_w.destroy();
+                                }
                                 if let Some(w) = app_handle.get_webview_window("main") {
                                     let _ = position_bottom_right(&w);
                                     let _ = w.emit("app_window_visibility", true);
@@ -2141,9 +2657,24 @@ fn main() {
                 .app_data_dir()
                 .unwrap_or_else(|_| PathBuf::from("data"));
             
-            // Clean any stale adapter DNS & proxy configuration on boot
+            // Exhaustive pre-flight clean sweep: stop and cleanup any stale WinDivert driver instances,
+            // flush leftover firewall rules, ensure no orphan processes or stuck states exist from prior sessions
+            Engine::kill_all_winws();
+            let _ = Command::new("sc.exe")
+                .args(["stop", "windivert"])
+                .creation_flags(0x0800_0000)
+                .output();
+            let _ = Command::new("sc.exe")
+                .args(["stop", "windivert14"])
+                .creation_flags(0x0800_0000)
+                .output();
+            engine::apply_quic_firewall_rule(false);
+            engine::apply_gaming_network_tweaks(false);
+            dns::clear_bypass_hosts();
             dns::recover(&dir);
             proxy::clean_stale_proxy();
+            proxy::patch_discord_settings(None);
+            dns::flush();
 
             let exe_dir = std::env::current_exe()
                 .ok()
@@ -2173,41 +2704,142 @@ fn main() {
             let boot_cfg = Config::load(&dir);
             HIDE_ON_BLUR.store(boot_cfg.hide_on_blur, Ordering::SeqCst);
             MINIMIZE_TO_TRAY.store(boot_cfg.minimize_to_tray, Ordering::SeqCst);
+            sound::set_enabled(boot_cfg.sound_enabled);
 
             // Ensure Windows startup registry is repaired, healed and synchronized with current/canonical executable
-            engine::repair_and_sync_autostart(boot_cfg.auto_start_pc);
+            engine::repair_and_sync_autostart(boot_cfg.auto_start_pc, boot_cfg.start_minimized);
 
             // Ensure system proxy is completely clean on startup
             proxy::clean_stale_proxy();
 
             Engine::kill_all_winws();
-            let mut engine = Engine::new(dir, bin);
+            let engine = Engine::new(dir.clone(), bin.clone());
 
-            // Auto-connect bypass on launch if configured
+            app.manage(AppState {
+                dir: dir.clone(),
+                bin: bin.clone(),
+                engine: Mutex::new(engine),
+            });
+
+            // Auto-connect bypass on launch asynchronously so it doesn't block window creation or UI message loop
             if boot_cfg.auto_connect {
-                let _ = engine.start(&boot_cfg);
+                let app_handle = app.handle().clone();
+                let dir_cl = dir.clone();
+                let bin_cl = bin.clone();
+                let boot_cfg_cl = boot_cfg.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _guard = OP_LOCK.lock().await;
+                    let _ = tokio::task::spawn_blocking(move || {
+                        if let Ok(native_cfg) = Engine::prepare_start(&dir_cl, &bin_cl, &boot_cfg_cl) {
+                            if let Some(state) = app_handle.try_state::<AppState>() {
+                                let start_res = {
+                                    let mut eng = state.engine.lock().unwrap();
+                                    eng.start_worker(native_cfg.clone())
+                                };
+                                let ok = match start_res {
+                                    Ok(_) => true,
+                                    Err(err) if err.contains("kilitli") || err.contains("10") || err.contains("1072") => {
+                                        let _ = resilience::repair_wfp_and_network_filters();
+                                        std::thread::sleep(Duration::from_millis(300));
+                                        let mut eng = state.engine.lock().unwrap();
+                                        eng.start_worker(native_cfg).is_ok()
+                                    }
+                                    _ => false,
+                                };
+                                if ok {
+                                    ENGINE_IS_ON.store(true, Ordering::SeqCst);
+                                    Engine::apply_post_start(&dir_cl, &boot_cfg_cl);
+                                    if boot_cfg_cl.game_priority_boost {
+                                        manage_game_process_priorities(&boot_cfg_cl, &get_running_processes());
+                                    }
+                                    let _ = app_handle.emit("engine_state_changed", true);
+                                }
+                            }
+                        }
+                    }).await;
+                });
             } else {
                 proxy::patch_discord_settings(None);
             }
 
-            app.manage(AppState {
-                engine: Mutex::new(engine),
-            });
-
-            // Background lightweight watchdog: checks if winws process died and restarts it if auto_healing is enabled.
-            // If engine is OFF, strictly ensures no orphan winws.exe lingers on the system.
+            // Background lightweight watchdog:
+            // 1. Checks if native packet engine died and restarts it if auto_healing is enabled.
+            // 2. Checks if Discord has a stalled/invalid session or updater hang and repairs it cleanly.
+            // When engine is OFF, never executes taskkill or acquires locks.
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                let mut last_discord_heal_ms: i64 = 0;
                 loop {
                     tokio::time::sleep(Duration::from_secs(4)).await;
+                    let _guard = match OP_LOCK.try_lock() {
+                        Ok(g) => g,
+                        Err(_) => continue,
+                    };
+                    if !ENGINE_IS_ON.load(Ordering::SeqCst) {
+                        continue;
+                    }
                     if let Some(state) = app_handle.try_state::<AppState>() {
-                        let mut eng = state.engine.lock().unwrap();
-                        let cfg = Config::load(&eng.dir);
+                        let is_alive = {
+                            if let Ok(eng) = state.engine.try_lock() {
+                                eng.is_on()
+                            } else {
+                                true
+                            }
+                        };
+                        let cfg = Config::load(&state.dir);
+                        if !is_alive {
+                            ENGINE_IS_ON.store(false, Ordering::SeqCst);
+                            if cfg.auto_healing {
+                                let dir = state.dir.clone();
+                                let bin = state.bin.clone();
+                                let app_cl = app_handle.clone();
+                                let _ = tokio::task::spawn_blocking(move || {
+                                    if let Ok(native_cfg) = Engine::prepare_start(&dir, &bin, &cfg) {
+                                        if let Some(st) = app_cl.try_state::<AppState>() {
+                                            let start_res = {
+                                                let mut eng = st.engine.lock().unwrap();
+                                                eng.start_worker(native_cfg.clone())
+                                            };
+                                            let ok = match start_res {
+                                                Ok(_) => true,
+                                                Err(err) if err.contains("kilitli") || err.contains("10") || err.contains("1072") => {
+                                                    let _ = resilience::repair_wfp_and_network_filters();
+                                                    std::thread::sleep(Duration::from_millis(300));
+                                                    let mut eng = st.engine.lock().unwrap();
+                                                    eng.start_worker(native_cfg).is_ok()
+                                                }
+                                                _ => false,
+                                            };
+                                            if ok {
+                                                ENGINE_IS_ON.store(true, Ordering::SeqCst);
+                                                Engine::apply_post_start(&dir, &cfg);
+                                                let _ = app_cl.emit("watchdog_recovery", "Motor arka planda otomatik onarıldı.");
+                                                let _ = app_cl.emit("engine_state_changed", true);
+                                            }
+                                        }
+                                    }
+                                }).await;
+                            }
+                        } else if cfg.auto_healing && cfg.enabled_apps.iter().any(|a| a == "discord") {
+                            let now = now_ms();
+                            // Debounce healing actions to at most once every 60 seconds
+                            if now - last_discord_heal_ms > 60_000 {
+                                let should_heal = tokio::task::spawn_blocking(move || {
+                                    if !proxy::is_discord_running() {
+                                        return false;
+                                    }
+                                    proxy::has_discord_stalled_session()
+                                }).await.unwrap_or(false);
 
-                        if !eng.is_on() {
-                            Engine::kill_all_winws();
-                        } else if cfg.auto_healing && eng.check_health(&cfg) {
-                            let _ = app_handle.emit("watchdog_recovery", "Motor arka planda otomatik onarıldı.");
+                                if should_heal {
+                                    last_discord_heal_ms = now_ms();
+                                    let app_cl = app_handle.clone();
+                                    tokio::task::spawn_blocking(move || {
+                                        let _ = proxy::repair_and_restart_discord();
+                                        let _ = app_cl.emit("watchdog_recovery", "Askıda kalan Discord oturumu otomatik olarak onarıldı ve yeniden başlatıldı.");
+                                    }).await.ok();
+                                }
+                            }
                         }
                     }
                 }
@@ -2216,12 +2848,13 @@ fn main() {
             // Tray setup
             let show_i = MenuItem::with_id(app, "toggle", "Aç / Gizle", true, None::<&str>)?;
             let toggle_bypass_i = MenuItem::with_id(app, "toggle_bypass", "Korumayı Aç / Kapat", true, None::<&str>)?;
+            let repair_discord_i = MenuItem::with_id(app, "repair_discord_tray", "Discord'u Onar ve Yeniden Başlat", true, None::<&str>)?;
             let flush_dns_i = MenuItem::with_id(app, "flush_dns", "DNS Önbelleğini Temizle", true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", "Çıkış", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &toggle_bypass_i, &flush_dns_i, &quit_i])?;
+            let menu = Menu::with_items(app, &[&show_i, &toggle_bypass_i, &repair_discord_i, &flush_dns_i, &quit_i])?;
 
             let default_icon = app.default_window_icon().cloned();
-            let mut tray_builder = TrayIconBuilder::new()
+            let tray_builder = TrayIconBuilder::with_id("main-tray")
                 .tooltip("Slipstream DPI Bypass")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -2238,40 +2871,69 @@ fn main() {
                     }
                     "toggle_bypass" => {
                         if let Some(state) = app.try_state::<AppState>() {
-                            let mut eng = state.engine.lock().unwrap();
-                            let cfg = Config::load(&eng.dir);
-                            let now_on = if eng.is_on() {
-                                eng.stop();
-                                false
-                            } else {
-                                let _ = eng.start(&cfg);
-                                true
-                            };
-                            let _ = app.emit("engine_state_changed", now_on);
+                            let is_currently_on = ENGINE_IS_ON.load(Ordering::SeqCst);
+                            let dir = state.dir.clone();
+                            let bin = state.bin.clone();
+                            let app_cl = app.clone();
+                            tauri::async_runtime::spawn(async move {
+                                let _guard = OP_LOCK.lock().await;
+                                if is_currently_on {
+                                    let app_h = app_cl.clone();
+                                    let dir_cl = dir.clone();
+                                    let _ = tokio::task::spawn_blocking(move || {
+                                        restore_all_boosted_game_priorities();
+                                        if let Some(st) = app_h.try_state::<AppState>() {
+                                            if let Ok(mut eng) = st.engine.lock() {
+                                                eng.stop_worker();
+                                            }
+                                        }
+                                        ENGINE_IS_ON.store(false, Ordering::SeqCst);
+                                        Engine::cleanup_post_stop(&dir_cl);
+                                        let _ = app_h.emit("engine_state_changed", false);
+                                    }).await;
+                                } else {
+                                    let cfg = Config::load(&dir);
+                                    let app_h = app_cl.clone();
+                                    let dir_cl = dir.clone();
+                                    let bin_cl = bin.clone();
+                                    let _ = tokio::task::spawn_blocking(move || {
+                                        if let Ok(native_cfg) = Engine::prepare_start(&dir_cl, &bin_cl, &cfg) {
+                                            if let Some(st) = app_h.try_state::<AppState>() {
+                                                if let Ok(mut eng) = st.engine.lock() {
+                                                    if eng.start_worker(native_cfg).is_ok() {
+                                                        ENGINE_IS_ON.store(true, Ordering::SeqCst);
+                                                        drop(eng);
+                                                        Engine::apply_post_start(&dir_cl, &cfg);
+                                                        if cfg.game_priority_boost {
+                                                            manage_game_process_priorities(&cfg, &get_running_processes());
+                                                        }
+                                                        let _ = app_h.emit("engine_state_changed", true);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }).await;
+                                }
+                            });
                         }
+                    }
+                    "repair_discord_tray" => {
+                        let app_cl = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let _ = tokio::task::spawn_blocking(proxy::repair_and_restart_discord).await;
+                            let _ = app_cl.emit("watchdog_recovery", "Discord onarıldı ve temiz başlatıldı.");
+                        });
                     }
                     "flush_dns" => {
-                        proxy::flush_dns_cache();
-                        let _ = app.emit("dns_flushed", ());
+                        let app_cl = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::task::spawn_blocking(proxy::flush_dns_cache).await.ok();
+                            let _ = app_cl.emit("dns_flushed", ());
+                        });
                     }
                     "quit" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.hide();
-                        }
-                        if let Some(t) = app.get_webview_window("toast") {
-                            let _ = t.destroy();
-                        }
-                        restore_all_boosted_game_priorities();
-                        engine::apply_gaming_network_tweaks(false);
-                        if let Some(state) = app.try_state::<AppState>() {
-                            if let Ok(mut eng) = state.engine.lock() {
-                                eng.ensure_relay(false);
-                                eng.stop();
-                            }
-                        }
-                        Engine::kill_all_winws();
-                        app.exit(0);
-                        std::process::exit(0);
+                        let state = app.try_state::<AppState>();
+                        full_application_shutdown(Some(&app), state.as_deref());
                     }
                     _ => {}
                 })
@@ -2288,29 +2950,26 @@ fn main() {
                                 MouseButtonState::Down => {
                                     let now = now_ms();
                                     let last_blur = LAST_BLUR_HIDE_MS.load(Ordering::SeqCst);
-                                    let is_open_and_focused = w.is_visible().unwrap_or(false)
+                                    let is_open = w.is_visible().unwrap_or(false)
                                         && !w.is_minimized().unwrap_or(false)
-                                        && (w.is_focused().unwrap_or(false) || (now - last_blur < 200));
-                                    TRAY_CLICK_STARTED_FOCUSED.store(is_open_and_focused, Ordering::SeqCst);
+                                        && (w.is_focused().unwrap_or(false) || (now - last_blur < 400));
+                                    TRAY_CLICK_STARTED_FOCUSED.store(is_open, Ordering::SeqCst);
                                 }
                                 MouseButtonState::Up => {
                                     let now = now_ms();
                                     let last_blur = LAST_BLUR_HIDE_MS.load(Ordering::SeqCst);
-                                    let started_focused = TRAY_CLICK_STARTED_FOCUSED.swap(false, Ordering::SeqCst);
+                                    let started_open = TRAY_CLICK_STARTED_FOCUSED.swap(false, Ordering::SeqCst);
                                     let is_vis = w.is_visible().unwrap_or(false);
                                     let is_min = w.is_minimized().unwrap_or(false);
 
-                                    if started_focused && is_vis && !is_min {
-                                        // Window was active and focused in foreground; click toggles it to hidden
-                                        LAST_BLUR_HIDE_MS.store(now, Ordering::SeqCst);
-                                        let _ = w.emit("app_window_visibility", false);
-                                        let _ = w.hide();
-                                        trim_all_slipstream_memory();
-                                    } else if started_focused && (now - last_blur < 200) {
-                                        // Already hidden by blur during this click sequence, keep hidden
+                                    if (started_open || (now - last_blur < 400)) && (!is_vis || (started_open && is_vis && !is_min)) {
+                                        if is_vis && !is_min {
+                                            perform_hide_window(&w);
+                                        }
+                                        // Keep hidden
+                                    } else if now - last_blur < 400 {
+                                        // Recently blurred or closed, keep hidden
                                     } else {
-                                        // Window is hidden, minimized, behind other apps/games, or not focused:
-                                        // ALWAYS open immediately on the 1st click and bring to front over any game!
                                         if let Some(toast_w) = app.get_webview_window("toast") {
                                             let _ = toast_w.destroy();
                                         }
@@ -2327,16 +2986,23 @@ fn main() {
                     }
                 });
 
-            if let Some(icon) = default_icon {
-                tray_builder = tray_builder.icon(icon);
-            }
+            let icon = match default_icon {
+                Some(i) => i,
+                None => tauri::image::Image::from_app_icon_resource(32)
+                    .unwrap_or_else(|_| tauri::image::Image::new_owned(vec![0u8; 32 * 32 * 4], 32, 32)),
+            };
+            let _tray = tray_builder.icon(icon).build(app)?;
 
-            let _tray = tray_builder.build(app)?;
+            // Ensure Windows Start Menu shortcuts and App Paths ("ss", "slipstream") are registered
+            engine::ensure_windows_search_integration();
 
-            // Check if application was started with --minimized / --autostart flag or start_minimized setting
+            // Only start minimized when explicitly launched via autostart or --minimized / -silent CLI flag,
+            // or when autostarted and boot_cfg.start_minimized is true.
+            // When user manually double-clicks or runs Slipstream interactively, always open and show the main window directly!
             let args: Vec<String> = std::env::args().collect();
-            let is_minimized_arg = args.iter().any(|a| a == "--minimized" || a == "--autostart" || a == "-silent");
-            let should_start_minimized = is_minimized_arg || boot_cfg.start_minimized;
+            let is_minimized_arg = args.iter().any(|a| a == "--minimized" || a == "-silent");
+            let is_autostart_arg = args.iter().any(|a| a == "--autostart");
+            let should_start_minimized = is_minimized_arg || (is_autostart_arg && boot_cfg.start_minimized);
 
             // Manage toast window according to startup mode
             if let Some(toast_w) = app.get_webview_window("toast") {
@@ -2371,6 +3037,33 @@ fn main() {
                 }
             }
 
+            // 1) Instant live SSE push listener
+            start_live_sse_update_listener(app.handle().clone(), dir.clone());
+
+            // 2) Cold-start update check (fires within 250ms of launch)
+            let app_cl = app.handle().clone();
+            let dir_cl = dir.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                let info = check_for_updates().await;
+                if info.has_update {
+                    notify_update_found(&app_cl, &dir_cl, &info, true);
+                }
+            });
+
+            // 3) 15-Minute safety fallback in case network drops or SSE reconnects
+            let app_cl2 = app.handle().clone();
+            let dir_cl2 = dir.clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(15 * 60)).await;
+                    let info = check_for_updates().await;
+                    if info.has_update {
+                        notify_update_found(&app_cl2, &dir_cl2, &info, false);
+                    }
+                }
+            });
+
             LAUNCH_TIME_MS.store(now_ms(), Ordering::SeqCst);
 
             Ok(())
@@ -2387,50 +3080,25 @@ fn main() {
                         return;
                     }
                     if HIDE_ON_BLUR.load(Ordering::SeqCst) && window.label() == "main" {
-                        if let Ok(true) = window.is_visible() {
-                            LAST_BLUR_HIDE_MS.store(now, Ordering::SeqCst);
-                            let _ = window.emit("app_window_visibility", false);
-                            let _ = window.hide();
-                            schedule_memory_trim();
+                        if let Some(w) = window.app_handle().get_webview_window("main") {
+                            perform_hide_window(&w);
                         }
                     }
                 }
             }
-            WindowEvent::CloseRequested { api, .. } => {
-                if window.label() != "main" {
-                    return;
-                }
-                if MINIMIZE_TO_TRAY.load(Ordering::SeqCst) {
-                    api.prevent_close();
-                    let _ = window.emit("app_window_visibility", false);
-                    let _ = window.hide();
-                    schedule_memory_trim();
-                } else {
-                    restore_all_boosted_game_priorities();
-                    engine::apply_gaming_network_tweaks(false);
-                    if let Some(state) = window.try_state::<AppState>() {
-                        if let Ok(mut eng) = state.engine.lock() {
-                            eng.ensure_relay(false);
-                            eng.stop();
-                        }
-                    }
-                    Engine::kill_all_winws();
-                    std::process::exit(0);
+            WindowEvent::CloseRequested { .. } => {
+                if window.label() == "main" {
+                    let app = window.app_handle();
+                    let state = window.try_state::<AppState>();
+                    full_application_shutdown(Some(&app), state.as_deref());
                 }
             }
             WindowEvent::Destroyed => {
-                if window.label() != "main" {
-                    return;
+                if window.label() == "main" {
+                    let app = window.app_handle();
+                    let state = window.try_state::<AppState>();
+                    full_application_shutdown(Some(&app), state.as_deref());
                 }
-                restore_all_boosted_game_priorities();
-                engine::apply_gaming_network_tweaks(false);
-                if let Some(state) = window.try_state::<AppState>() {
-                    if let Ok(mut eng) = state.engine.lock() {
-                        eng.ensure_relay(false);
-                        eng.stop();
-                    }
-                }
-                Engine::kill_all_winws();
             }
             _ => {}
         })
@@ -2466,6 +3134,7 @@ fn main() {
             open_main_from_toast,
             hide_toast_notification,
             show_toast_notification,
+            get_initial_toast_message,
             is_portable,
             get_detected_active_apps,
             is_game_running,
@@ -2477,21 +3146,23 @@ fn main() {
             is_window_visible,
             play_sound,
             get_system_identity,
-            send_discord_feedback
+            send_discord_feedback,
+            check_elevation,
+            request_elevation,
+            check_antivirus_health,
+            apply_defender_exclusions,
+            detect_conflicts,
+            resolve_conflicts,
+            diagnose_wfp,
+            repair_wfp,
+            fetch_remote_isp_updates
         ])
         .build(tauri::generate_context!())
         .expect("error while building Slipstream")
         .run(|app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
-                restore_all_boosted_game_priorities();
-                engine::apply_gaming_network_tweaks(false);
-                if let Some(state) = app_handle.try_state::<AppState>() {
-                    if let Ok(mut eng) = state.engine.lock() {
-                        eng.ensure_relay(false);
-                        eng.stop();
-                    }
-                }
-                Engine::kill_all_winws();
+                let state = app_handle.try_state::<AppState>();
+                full_application_shutdown(Some(app_handle), state.as_deref());
             }
         });
 }
@@ -2509,6 +3180,17 @@ mod tests {
         assert!(!is_newer_version("0.1.6", "0.1.6.1"));
         assert!(!is_newer_version("0.1.6.1", "0.1.6.1"));
         assert!(!is_newer_version("0.1.6", "0.1.6"));
+    }
+
+    #[test]
+    fn test_is_trusted_update_url() {
+        assert!(is_trusted_update_url("https://github.com/BaranK35/Slipstream2/releases/download/v0.2.7/Slipstream_0.2.7_x64-setup.exe"));
+        assert!(is_trusted_update_url("https://github.com/BaranK35/Slipstreamtest2/releases/download/v0.2.7/Slipstream_0.2.7_x64-setup.exe"));
+        // Reject non-whitelisted domains, HTTP, arbitrary exes, and path injections
+        assert!(!is_trusted_update_url("http://github.com/BaranK35/Slipstream2/releases/download/v0.2.7/setup.exe"));
+        assert!(!is_trusted_update_url("https://malicious-site.com/payload.exe"));
+        assert!(!is_trusted_update_url("https://github.com/attacker/malware/releases/download/v1.0/evil.exe"));
+        assert!(!is_trusted_update_url("https://github.com/BaranK35/Slipstream2/releases/download/v0.2.7/script.bat"));
     }
 
     #[test]
@@ -2639,5 +3321,13 @@ mod tests {
         assert!(installed_setup_path.starts_with(&dir1));
         assert!(!portable_name.starts_with(&dir1));
         assert!(!portable_name.starts_with(&dir2));
+    }
+
+    #[tokio::test]
+    async fn test_check_for_updates_live() {
+        let is_newer = super::is_newer_version("0.3.1", "0.3.0");
+        println!("IS NEWER 0.3.1 > 0.3.0: {}", is_newer);
+        let info = super::check_for_updates().await;
+        println!("TEST UPDATE RESULT: has_update={} latest={} current={} url={}", info.has_update, info.latest_version, info.current_version, info.download_url);
     }
 }

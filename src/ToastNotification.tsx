@@ -12,16 +12,22 @@ export default function ToastNotification() {
     document.documentElement.classList.add("is-toast");
     document.body.classList.add("is-toast");
 
+    invoke<string | null>("get_initial_toast_message")
+      .then((msg) => {
+        if (msg) setCustomMsg(msg);
+      })
+      .catch(() => {});
+
     const unlistenPromise = listen<string>("toast_message", (event) => {
       if (event.payload) {
         setCustomMsg(event.payload);
       }
     });
 
-    // Auto-dismiss after 5.5 seconds
+    // Auto-dismiss after 6.5 seconds
     timerRef.current = setTimeout(() => {
       handleDismiss();
-    }, 5500);
+    }, 6500);
 
     return () => {
       unlistenPromise.then((unlisten) => unlisten());
@@ -43,7 +49,10 @@ export default function ToastNotification() {
     invoke("open_main_from_toast").catch(() => {});
   };
 
-  const isUpdateNotice = customMsg?.toLowerCase().includes("güncelle") ?? false;
+  const isUpdateNotice =
+    (customMsg?.toLowerCase().includes("güncelle") ||
+      customMsg?.toLowerCase().includes("update")) ??
+    false;
 
   return (
     <div className="toast-wrapper" onClick={handleOpenMain}>

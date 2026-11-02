@@ -346,7 +346,7 @@ export default function App() {
   }, [isLangMenuOpen]);
 
   const getDisplayVersion = (rawVer?: string) => {
-    const v = (rawVer || "0.2.1").replace(/^v/, "");
+    const v = (rawVer || "0.3.7").replace(/^v/, "");
     const parts = v.split(/[.+]/);
     if (parts.length > 3) {
       return `${parts[0]}.${parts[1]}.${parts[2]}`;
@@ -519,6 +519,17 @@ export default function App() {
       }
     });
 
+    const unlistenUpdateStatus = listen<string>("update_status", (e) => {
+      const status = e.payload;
+      if (status === "downloading" || status === "installing") {
+        updatingRef.current = true;
+        setUpdating(true);
+      } else if (status === "idle" || status === "failed") {
+        updatingRef.current = false;
+        setUpdating(false);
+      }
+    });
+
     const onVisibilityChange = () => {
       const vis = !document.hidden;
       setIsWindowVisible(vis);
@@ -580,6 +591,7 @@ export default function App() {
       clearInterval(periodicUpdateTimer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       unlistenVis.then((f) => f());
+      unlistenUpdateStatus.then((f) => f());
       unlistenAutotune.then((f) => f());
       unlistenWatchdog.then((f) => f());
       unlistenState.then((f) => f());
@@ -813,7 +825,7 @@ export default function App() {
             <img src={logoSvg} alt="Slipstream" className="brand-logo" />
             <div className="status-indicator busy" />
             <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
-            <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.2.1")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+            <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.3.7")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
           </div>
           <div className="window-controls">
             <button className="win-btn minimize" title={t.minimizeTitle} onClick={() => invoke("hide_window")}>
@@ -1213,7 +1225,22 @@ export default function App() {
 
   async function handleApplyUpdate(downloadUrl?: string, silent: boolean = false) {
     if (updatingRef.current) return;
-    const url = downloadUrl || updateInfo?.download_url;
+    let url = downloadUrl || updateInfo?.download_url;
+    if (!url) {
+      try {
+        const info = await invoke<{
+          has_update: boolean;
+          current_version: string;
+          latest_version: string;
+          release_notes: string;
+          download_url: string;
+        }>("check_for_updates");
+        setUpdateInfo(info);
+        if (info.download_url) {
+          url = info.download_url;
+        }
+      } catch {}
+    }
     if (!url) return;
     const now = Date.now();
     lastUpdateAttemptRef.current = now;
@@ -1356,7 +1383,7 @@ export default function App() {
           <img src={logoSvg} alt="Slipstream" className="brand-logo" />
           <div className={`status-indicator ${busy ? "busy" : on ? "active" : "inactive"}`} />
           <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
-          <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.2.1")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+          <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.3.7")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
         </div>
         <div className="window-controls">
           <button
@@ -1429,16 +1456,18 @@ export default function App() {
           <div className="update-banner">
             <div className="update-content">
               <div className="update-header-row">
-                <span className="update-badge">
-                  {cfg?.auto_update ? t.autoBadge : t.newVersionBadge}
+                <span className={`update-badge ${updating ? "updating" : ""}`}>
+                  {updating
+                    ? (lang === "tr" ? "⚡ GÜNCELLENİYOR" : "⚡ UPDATING")
+                    : (lang === "tr" ? "⚡ YENİ SÜRÜM" : "⚡ NEW VERSION")}
                 </span>
                 <span className="update-version-tag">v{updateInfo.latest_version}</span>
               </div>
               <div className="update-summary-row">
                 <span className="update-compact-desc">
-                  {cfg?.auto_update
-                    ? (updating ? t.autoUpdatingText : t.autoBgUpdatingText)
-                    : t.manualUpdateText}
+                  {updating
+                    ? (lang === "tr" ? "Yeni sürüm indiriliyor ve kuruluyor..." : "Downloading and installing new version...")
+                    : (lang === "tr" ? `v${updateInfo.latest_version} güncellemesi hazır.` : `v${updateInfo.latest_version} update is ready.`)}
                 </span>
                 <button
                   type="button"
@@ -1449,19 +1478,16 @@ export default function App() {
                 </button>
               </div>
             </div>
-            {!cfg?.auto_update ? (
-              <button
-                className="update-action-btn"
-                onClick={() => handleApplyUpdate()}
-                disabled={updating}
-              >
-                {updating ? t.downloadingText : t.updateNowBtn}
-              </button>
-            ) : (
-              <span className="update-auto-tag">
-                {updating ? t.downloadingAutoTag : t.autoTag}
-              </span>
-            )}
+            <button
+              type="button"
+              className={`update-action-btn ${updating ? "updating" : ""}`}
+              onClick={() => handleApplyUpdate(undefined, false)}
+              disabled={updating}
+            >
+              {updating
+                ? (lang === "tr" ? "⚡ Güncelleniyor..." : "⚡ Updating...")
+                : (lang === "tr" ? "⚡ Şimdi Güncelle" : "⚡ Update Now")}
+            </button>
           </div>
         )}
 
@@ -2121,7 +2147,7 @@ export default function App() {
                     <div className="pref-meta">
                       <span className="pref-name">{t.versionCheckLabel}</span>
                       <span className="pref-desc">
-                        {t.currentVersionPrefix} v{updateInfo?.current_version || "0.2.1"}
+                        {t.currentVersionPrefix} v{updateInfo?.current_version || "0.3.7"}
                         {updateInfo?.has_update ? (
                           <span style={{ color: "var(--cyan)", fontWeight: 600, marginLeft: 6 }}>
                             {t.newVersionLiveTag(updateInfo.latest_version)}
@@ -2949,7 +2975,7 @@ export default function App() {
                 <span style={{ fontSize: 16 }}>🚀</span>
                 <h3 className="modal-title">
                   {t.releaseNotesTitle(
-                    justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.2.7"
+                    justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.3.7"
                   )}
                 </h3>
               </div>
@@ -2958,7 +2984,7 @@ export default function App() {
             <div className="modal-body" style={{ maxHeight: "320px", overflowY: "auto", padding: "14px 16px" }}>
               <div className="release-notes-list">
                 {(() => {
-                  const targetVer = justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.2.7";
+                  const targetVer = justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.3.7";
                   const notesText = updateInfo?.release_notes?.trim();
 
                   if (notesText && notesText.length > 0) {
@@ -3015,7 +3041,7 @@ export default function App() {
                   GitHub ↗
                 </button>
               </div>
-              {updateInfo?.has_update && !cfg?.auto_update && (
+              {updateInfo?.has_update && (
                 <button
                   className="primary-btn"
                   onClick={() => {

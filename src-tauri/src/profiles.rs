@@ -32,6 +32,7 @@ pub const APPS: &[AppProfile] = &[
             "gateway.discord.gg", "status.discord.com", "updates.discord.com", "dl.discordapp.net",
             "cdn.discordapp.com", "media.discordapp.net", "images-ext-1.discordapp.net",
             "images-ext-2.discordapp.net", "attachments.discord.net", "attachments.discord.com", "cdn.discord.com",
+            "dis.gd", "discordsez.com", "discordactivities.com", "discord-activities.com", "remote-auth-gateway.discord.gg", "latency.discord.media",
         ],
         exes: &["Discord.exe", "DiscordPTB.exe", "DiscordCanary.exe", "Update.exe"],
         voice: true,
@@ -303,7 +304,7 @@ pub fn expand_domains(raw: &str) -> Vec<String> {
             "discord.new", "discord.gift", "discord.gifts", "discord.dev",
             "discord.design", "discord.store", "discord.tools", "discordapp.com",
             "discordapp.net", "discordcdn.com", "discordstatus.com", "discordsays.com",
-            "discordsez.com", "discordactivities.com", "discord-activities.com", "dis.gd",
+            "discordsez.com", "discordactivities.com", "discord-activities.com", "remote-auth-gateway.discord.gg", "latency.discord.media", "dis.gd",
             "gateway.discord.gg", "status.discord.com", "updates.discord.com", "dl.discordapp.net",
             "cdn.discordapp.com", "media.discordapp.net", "attachments.discord.net",
         ].into_iter().map(String::from));
@@ -342,6 +343,8 @@ pub fn expand_domains(raw: &str) -> Vec<String> {
         set.extend(vec!["reddit.com", "redd.it", "redditstatic.com", "redditmedia.com"].into_iter().map(String::from));
     } else if lower.contains("github") || slug == "github" {
         set.extend(vec!["github.com", "githubusercontent.com", "githubassets.com"].into_iter().map(String::from));
+    } else if crate::apps::is_browser(&lower, &slug) {
+        set.extend(crate::apps::get_browser_domains());
     }
 
     // 3) Intelligent Generative Subdomains & Service Endpoints for the base domain
@@ -433,6 +436,21 @@ pub fn collect_domains(cfg: &Config) -> Vec<String> {
 
     // Custom domains
     set.extend(cfg.custom_domains.iter().filter_map(|d| normalize(d)));
+
+    // If any custom platform or custom exe is a browser, include comprehensive browser blocked domains
+    let has_browser = cfg.custom_exes.iter().any(|x| crate::apps::is_browser(x, x))
+        || cfg.custom_platforms.iter().any(|p| {
+            cfg.enabled_apps.iter().any(|e| e == &p.id)
+                && crate::apps::is_browser(&p.name, p.exe_name.as_deref().unwrap_or(&p.name))
+        });
+    if has_browser {
+        for d in crate::apps::get_browser_domains() {
+            if let Some(norm) = normalize(&d) {
+                set.insert(norm);
+            }
+        }
+    }
+
     set.into_iter().collect()
 }
 
@@ -551,6 +569,27 @@ mod tests {
         assert!(domains.contains(&"riotgames.com".to_string()));
         assert!(domains.contains(&"pvp.net".to_string()));
         assert!(domains.contains(&"playvalorant.com".to_string()));
+    }
+
+    #[test]
+    fn test_expand_domains_browser_includes_popular_services() {
+        let domains = expand_domains("brave.exe");
+        assert!(domains.contains(&"discord.com".to_string()));
+        assert!(domains.contains(&"roblox.com".to_string()));
+        assert!(domains.contains(&"x.com".to_string()));
+        assert!(domains.contains(&"instagram.com".to_string()));
+        assert!(domains.contains(&"pastebin.com".to_string()));
+        assert!(domains.contains(&"youtube.com".to_string()));
+    }
+
+    #[test]
+    fn test_collect_domains_with_browser_custom_exe() {
+        let mut cfg = Config::default();
+        cfg.custom_exes = vec!["brave.exe".to_string()];
+        let collected = collect_domains(&cfg);
+        assert!(collected.contains(&"discord.com".to_string()));
+        assert!(collected.contains(&"x.com".to_string()));
+        assert!(collected.contains(&"pastebin.com".to_string()));
     }
 }
 

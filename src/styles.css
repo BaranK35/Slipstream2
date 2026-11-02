@@ -99,6 +99,7 @@ html, body {
   width: 100vw;
   background: #0a0d16;
   display: flex;
+  overflow: hidden;
 }
 
 /* Main Window Container with Glassmorphism Depth */
@@ -156,7 +157,7 @@ html, body {
   cursor: default;
   flex-shrink: 0;
   position: relative;
-  z-index: 10;
+  z-index: 999;
 }
 
 .brand {
@@ -213,6 +214,10 @@ html, body {
   display: flex;
   align-items: center;
   gap: 4px;
+  -webkit-app-region: no-drag !important;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 1000;
 }
 
 .win-btn {
@@ -226,6 +231,9 @@ html, body {
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
+  -webkit-app-region: no-drag !important;
+  pointer-events: auto !important;
+  user-select: none;
 }
 
 .win-btn.feedback {
@@ -292,6 +300,7 @@ html, body {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
@@ -1134,6 +1143,7 @@ html, body {
 .log-container {
   max-height: 120px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 8px 10px;
   background: #080a11;
   border: 1px solid var(--border);
@@ -2359,7 +2369,7 @@ html, body {
 
 /* Update Banner */
 .update-banner {
-  margin: 8px 14px 2px;
+  margin: 0 0 6px;
   padding: 8px 12px;
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.18) 0%, rgba(16, 185, 129, 0.14) 100%);
   backdrop-filter: blur(14px);
@@ -2464,6 +2474,8 @@ html, body {
   box-shadow: 0 3px 10px rgba(99, 102, 241, 0.3);
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   flex-shrink: 0;
+  -webkit-app-region: no-drag !important;
+  pointer-events: auto !important;
 }
 
 .update-action-btn:hover:not(:disabled) {
@@ -2475,9 +2487,31 @@ html, body {
   transform: translateY(0);
 }
 
+.update-badge.updating {
+  color: #38bdf8;
+  animation: pulse-badge 1.2s infinite;
+}
+
+@keyframes pulse-badge {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
 .update-action-btn:disabled {
   opacity: 0.65;
   cursor: wait;
+}
+
+.update-action-btn.updating {
+  background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%) !important;
+  opacity: 0.95 !important;
+  cursor: wait !important;
+  animation: pulse-update 1.5s infinite;
+}
+
+@keyframes pulse-update {
+  0%, 100% { opacity: 0.85; box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3); }
+  50% { opacity: 1; box-shadow: 0 4px 14px rgba(14, 165, 233, 0.6); }
 }
 
 .update-auto-tag {
@@ -3959,6 +3993,79 @@ html.is-toast, body.is-toast, body.is-toast #root {
   background: linear-gradient(135deg, #6875f5 0%, #5865f2 100%) !important;
   box-shadow: 0 6px 18px rgba(88, 101, 242, 0.5) !important;
   transform: translateY(-1px);
+}
+
+/* Resilience Banners: Elevation, Conflicts, Warnings */
+.resilience-banner {
+  margin: 6px 14px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md, 10px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  animation: bannerSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  font-size: 11.5px;
+}
+
+.resilience-banner.warn-banner {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.16) 0%, rgba(217, 119, 6, 0.12) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  box-shadow: 0 4px 16px -2px rgba(245, 158, 11, 0.15);
+}
+
+.resilience-banner.danger-banner {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.18) 0%, rgba(185, 28, 28, 0.12) 100%);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  box-shadow: 0 4px 16px -2px rgba(239, 68, 68, 0.15);
+}
+
+.resilience-banner.info-banner {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.16) 0%, rgba(2, 132, 199, 0.12) 100%);
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  box-shadow: 0 4px 16px -2px rgba(14, 165, 233, 0.15);
+}
+
+.resilience-banner .banner-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.resilience-banner .banner-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.resilience-banner .banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.resilience-banner .banner-text strong {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.2;
+}
+
+.resilience-banner .banner-text span {
+  font-size: 10.5px;
+  color: var(--text-dim, #94a3b8);
+  line-height: 1.25;
+}
+
+.banner-action-btn {
+  padding: 5px 10px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: var(--radius-sm, 6px);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 
