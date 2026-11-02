@@ -4,6 +4,16 @@ export interface ReleaseHighlight {
 }
 
 export const RELEASE_HIGHLIGHTS: Record<string, ReleaseHighlight> = {
+  "0.3.8": {
+    tr: [
+      "Güncelleme Sistemi Doğrulama ve Kararlılık: Canlı güncelleme akışı, indirme motoru ve NSIS kurulum süreçleri tamamen doğrulandı.",
+      "Anlık Senkronizasyon İyileştirmesi: Uygulama açıkken gelen yeni sürüm bildirimleri ve arayüz tepkiselliği güçlendirildi."
+    ],
+    en: [
+      "Update Engine Verification & Reliability: Validated the end-to-end update flow, download handling, and NSIS installation process.",
+      "Real-time Notification Polish: Enhanced update banner responsiveness and live status handling."
+    ]
+  },
   "0.3.7": {
     tr: [
       "Güncelleme Motoru ve Otomatik İndirme Düzeltmesi: Windows sistem ve oyun servislerinin (GamingServices vb.) oyun olarak algılanıp güncellemeleri engellemesi sorunu giderildi.",
