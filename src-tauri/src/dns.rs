@@ -307,16 +307,16 @@ pub fn apply_dns(cfg: &Config, dir: &Path) {
     let state_file = dir.join(STATE_FILE);
     let _ = fs::write(&state_file, "active");
 
-    let (primary, secondary, ipv6_primary, ipv6_secondary) = match cfg.doh_provider.to_lowercase().as_str() {
-        "google" => ("8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844"),
-        "quad9" => ("9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9"),
-        "adguard" => ("94.140.14.140", "94.140.14.141", "2a10:50c0::ad1:ff", "2a10:50c0::ad2:ff"),
-        "yandex" => ("77.88.8.8", "77.88.8.1", "2a02:6b8::feed:0ff", "2a02:6b8:0:1::feed:0ff"),
-        _ => ("1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001"),
+    let (primary, secondary, ipv6_primary, ipv6_secondary, doh_template) = match cfg.doh_provider.to_lowercase().as_str() {
+        "google" => ("8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844", "https://dns.google/dns-query"),
+        "quad9" => ("9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9", "https://dns.quad9.net/dns-query"),
+        "adguard" => ("94.140.14.140", "94.140.14.141", "2a10:50c0::ad1:ff", "2a10:50c0::ad2:ff", "https://dns.adguard-dns.com/dns-query"),
+        "yandex" => ("77.88.8.8", "77.88.8.1", "2a02:6b8::feed:0ff", "2a02:6b8:0:1::feed:0ff", "https://common.dot.dns.yandex.net/dns-query"),
+        _ => ("1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001", "https://cloudflare-dns.com/dns-query"),
     };
 
     let script = format!(
-        r"Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object {{ $idx = $_.InterfaceIndex; Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses @('{primary}', '{secondary}') -ErrorAction SilentlyContinue; Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses @('{ipv6_primary}', '{ipv6_secondary}') -ErrorAction SilentlyContinue }}"
+        r"Set-DnsClientDohServerAddress -ServerAddress '{primary}' -AutoUpgrade $true -ErrorAction SilentlyContinue; Set-DnsClientDohServerAddress -ServerAddress '{secondary}' -AutoUpgrade $true -ErrorAction SilentlyContinue; if (!(Get-DnsClientDohServerAddress -ServerAddress '{primary}' -ErrorAction SilentlyContinue)) {{ Add-DnsClientDohServerAddress -ServerAddress '{primary}' -DohTemplate '{doh_template}' -AllowFallbackToUdp $true -AutoUpgrade $true -ErrorAction SilentlyContinue; }}; Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object {{ $idx = $_.InterfaceIndex; Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses @('{primary}', '{secondary}', '{ipv6_primary}', '{ipv6_secondary}') -ErrorAction SilentlyContinue }}"
     );
     ps(&script);
     flush();

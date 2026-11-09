@@ -4,6 +4,22 @@ export interface ReleaseHighlight {
 }
 
 export const RELEASE_HIGHLIGHTS: Record<string, ReleaseHighlight> = {
+  "0.3.9": {
+    tr: [
+      "Evrensel Web & Tarayıcı DPI Atlama: Tarayıcılarda (Thorium, Brave, Chrome, Edge, Firefox vb.) ve eklenen uygulamalarda tüm sitelerin engelsiz açılabilmesi için evrensel paket desync modu devreye alındı.",
+      "Şifreli DoH (DNS-over-HTTPS) & DNS Zehirlenmesi Koruması: İSS UDP port 53 engellemeleri ve DNS zehirlemeleri Windows 11 yerleşik DoH ile tamamen aşıldı; alan adları doğrudan gerçek IP adreslerine çözümleniyor.",
+      "Özel Domain ve Özel Platform Desteği Güçlendirildi: Kullanıcı tarafından eklenen domainler ve platformlar artık gecikmesiz ve otomatik olarak DPI korumasından geçiriliyor.",
+      "Canlı Süreç ve Oyun Algılayıcı (Watchdog): Arka planda çalışan oyun ve uygulamaları dinamik olarak gerçek zamanlı algılayan ve arayüze anında yansıtan nöbetçi mekanizma eklendi.",
+      "Tam Sessiz Başlangıç (Stealth Startup): 'Başlangıçta Tepsiye Gizlen' aktifken bilgisayar açılışında ekranda hiçbir pencere ve bildirim gösterilmeden doğrudan tepsiye yerleşmesi sağlandı."
+    ],
+    en: [
+      "Universal Web & Browser DPI Bypass: Enabled universal packet desync for browsers (Thorium, Brave, Chrome, Edge, Firefox, etc.) and custom apps to bypass ISP censorship on all websites.",
+      "Encrypted DoH & DNS Poisoning Defense: Defeated ISP UDP 53 blocking and DNS poisoning via native Windows 11 DoH, resolving blocked domains directly to their real Anycast IPs.",
+      "Enhanced Custom Domains & Platforms: Custom user domains and added applications are now automatically and reliably routed through DPI bypass.",
+      "Real-time Process & Game Watchdog: Added a background watchdog that dynamically monitors running games and apps, instantly updating live status badges and tags in the UI.",
+      "Zero-Popup Silent Startup: Ensured 100% stealth tray startup with zero on-screen notifications or window popups when 'Start Minimized to Tray' is enabled."
+    ]
+  },
   "0.3.8": {
     tr: [
       "Güncelleme Sistemi Doğrulama ve Kararlılık: Canlı güncelleme akışı, indirme motoru ve NSIS kurulum süreçleri tamamen doğrulandı.",

@@ -168,6 +168,8 @@ pub fn is_browser(name: &str, exe_name: &str) -> bool {
     let browser_keywords = [
         "brave", "chrome", "firefox", "msedge", "edge", "opera", "vivaldi",
         "zen", "waterfox", "librewolf", "tor", "arc", "chromium", "yandex",
+        "thorium", "floorp", "coccoc", "whale", "duckduckgo", "browser",
+        "tarayici", "tarayıcı", "ucbrowser", "maxthon", "ghostery", "avast", "avg", "epic", "pale", "basilisk",
     ];
     browser_keywords.iter().any(|&b| combined.contains(b))
 }

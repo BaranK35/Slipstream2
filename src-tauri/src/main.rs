@@ -1354,29 +1354,60 @@ fn is_game_process_running(cfg: &Config, running_procs: &[ProcessItem]) -> bool 
     running_procs.iter().any(|p| game_exes.contains(&p.name.to_lowercase()))
 }
 
+pub fn get_detected_active_apps_sync(cfg: &Config) -> Vec<String> {
+    let running_exes = get_running_process_names();
+    let running_lower: std::collections::HashSet<String> = running_exes.iter().map(|e| e.to_lowercase()).collect();
+    let mut detected = Vec::new();
+
+    // 1. Built-in profiles (Discord, Roblox)
+    for profile in profiles::APPS {
+        for exe in profile.exes {
+            if running_lower.contains(&exe.to_lowercase()) {
+                detected.push(profile.id.to_string());
+                break;
+            }
+        }
+    }
+
+    // 2. Custom platforms
+    for plat in &cfg.custom_platforms {
+        let matches_exe_name = plat.exe_name.as_ref().map(|e| running_lower.contains(&e.to_lowercase())).unwrap_or(false);
+        let matches_exe_path = plat.exe_path.as_ref().map(|p| {
+            let filename = std::path::Path::new(p).file_name().and_then(|f| f.to_str()).unwrap_or("").to_lowercase();
+            !filename.is_empty() && running_lower.contains(&filename)
+        }).unwrap_or(false);
+        let matches_name = running_lower.contains(&format!("{}.exe", plat.name.to_lowercase()));
+
+        if (matches_exe_name || matches_exe_path || matches_name) && !detected.contains(&plat.id) {
+            detected.push(plat.id.clone());
+        }
+    }
+
+    // 3. Custom exes (e.g. thorium.exe, brave.exe)
+    for exe in &cfg.custom_exes {
+        let lower_exe = exe.to_lowercase();
+        if running_lower.contains(&lower_exe) {
+            if let Some(plat) = cfg.custom_platforms.iter().find(|p| {
+                p.exe_name.as_deref().map(|s| s.eq_ignore_ascii_case(&lower_exe)).unwrap_or(false)
+                || p.id.eq_ignore_ascii_case(&lower_exe)
+                || format!("{}.exe", p.name.to_lowercase()) == lower_exe
+            }) {
+                if !detected.contains(&plat.id) {
+                    detected.push(plat.id.clone());
+                }
+            } else if !detected.contains(&lower_exe) {
+                detected.push(lower_exe);
+            }
+        }
+    }
+
+    detected
+}
+
 #[tauri::command]
 async fn get_detected_active_apps(cfg: Config) -> Vec<String> {
     tokio::task::spawn_blocking(move || {
-        let running_exes = get_running_process_names();
-        let running_lower: std::collections::HashSet<String> = running_exes.iter().map(|e| e.to_lowercase()).collect();
-        let mut detected = Vec::new();
-
-        for profile in profiles::APPS {
-            for exe in profile.exes {
-                if running_lower.contains(&exe.to_lowercase()) {
-                    detected.push(profile.id.to_string());
-                    break;
-                }
-            }
-        }
-        for plat in &cfg.custom_platforms {
-            if let Some(ref exe) = plat.exe_name {
-                if running_lower.contains(&exe.to_lowercase()) {
-                    detected.push(plat.id.clone());
-                }
-            }
-        }
-        detected
+        get_detected_active_apps_sync(&cfg)
     })
     .await
     .unwrap_or_default()
@@ -3023,19 +3054,32 @@ fn main() {
                     let _ = w.emit("app_window_visibility", false);
                     let _ = w.hide();
                     schedule_memory_trim();
-
-                    // Show animated background notification in bottom-right
-                    let app_handle = app.handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(1200)).await;
-                        show_toast_notification(app_handle, None);
-                    });
                 } else {
                     let _ = w.emit("app_window_visibility", true);
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
             }
+
+            // Real-time live process and game detection watchdog (emits detected_processes_changed)
+            let app_handle_for_proc = app.handle().clone();
+            let dir_for_proc = dir.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut last_detected: Option<Vec<String>> = None;
+                loop {
+                    tokio::time::sleep(Duration::from_millis(2500)).await;
+                    let cfg = engine::Config::load(&dir_for_proc);
+                    let current = get_detected_active_apps_sync(&cfg);
+                    let has_changed = match &last_detected {
+                        Some(prev) => prev != &current,
+                        None => true,
+                    };
+                    if has_changed {
+                        last_detected = Some(current.clone());
+                        let _ = app_handle_for_proc.emit("detected_processes_changed", &current);
+                    }
+                }
+            });
 
             // 1) Instant live SSE push listener
             start_live_sse_update_listener(app.handle().clone(), dir.clone());

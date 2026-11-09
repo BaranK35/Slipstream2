@@ -437,11 +437,13 @@ pub fn collect_domains(cfg: &Config) -> Vec<String> {
     // Custom domains
     set.extend(cfg.custom_domains.iter().filter_map(|d| normalize(d)));
 
-    // If any custom platform or custom exe is a browser, include comprehensive browser blocked domains
-    let has_browser = cfg.custom_exes.iter().any(|x| crate::apps::is_browser(x, x))
+    // If any custom platform, enabled app, or custom exe is a browser, include comprehensive browser blocked domains
+    let has_browser = cfg.enabled_apps.iter().any(|a| crate::apps::is_browser(a, a))
+        || cfg.custom_exes.iter().any(|x| crate::apps::is_browser(x, x))
         || cfg.custom_platforms.iter().any(|p| {
             cfg.enabled_apps.iter().any(|e| e == &p.id)
-                && crate::apps::is_browser(&p.name, p.exe_name.as_deref().unwrap_or(&p.name))
+                && (crate::apps::is_browser(&p.name, p.exe_name.as_deref().unwrap_or(&p.name))
+                    || p.exe_path.as_ref().map(|path| crate::apps::is_browser(&p.name, path)).unwrap_or(false))
         });
     if has_browser {
         for d in crate::apps::get_browser_domains() {
