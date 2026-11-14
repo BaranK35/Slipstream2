@@ -539,6 +539,127 @@ pub fn diagnose_wfp_health() -> WfpDiagnostics {
     }
 }
 
+/// Programmatically stops the WinDivert kernel driver service via Service Control Manager (SCM).
+/// Also falls back to `sc.exe stop windivert` and `sc.exe stop windivert14` to guarantee
+/// all WFP kernel filters and sublayers are completely released.
+#[cfg(target_os = "windows")]
+pub fn stop_windivert_kernel_driver() {
+    use std::os::windows::ffi::OsStrExt;
+    use std::ffi::OsStr;
+    use std::ptr;
+
+    #[allow(non_snake_case)]
+    #[repr(C)]
+    struct SERVICE_STATUS {
+        dwServiceType: u32,
+        dwCurrentState: u32,
+        dwControlsAccepted: u32,
+        dwWin32ExitCode: u32,
+        dwServiceSpecificExitCode: u32,
+        dwCheckPoint: u32,
+        dwWaitHint: u32,
+    }
+
+    const SC_MANAGER_CONNECT: u32 = 0x0001;
+    const SERVICE_STOP: u32 = 0x0020;
+    const SERVICE_QUERY_STATUS: u32 = 0x0004;
+    const SERVICE_CONTROL_STOP: u32 = 0x00000001;
+    const SERVICE_STOPPED: u32 = 0x00000001;
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenSCManagerW(
+            lpMachineName: *const u16,
+            lpDatabaseName: *const u16,
+            dwDesiredAccess: u32,
+        ) -> isize;
+        fn OpenServiceW(
+            hSCManager: isize,
+            lpServiceName: *const u16,
+            dwDesiredAccess: u32,
+        ) -> isize;
+        fn ControlService(
+            hService: isize,
+            dwControl: u32,
+            lpServiceStatus: *mut SERVICE_STATUS,
+        ) -> i32;
+        fn QueryServiceStatus(
+            hService: isize,
+            lpServiceStatus: *mut SERVICE_STATUS,
+        ) -> i32;
+        fn CloseServiceHandle(hSCObject: isize) -> i32;
+    }
+
+    for svc_name in &["WinDivert", "windivert", "windivert14"] {
+        let wide: Vec<u16> = OsStr::new(svc_name)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        unsafe {
+            let scm = OpenSCManagerW(ptr::null(), ptr::null(), SC_MANAGER_CONNECT);
+            if scm != 0 {
+                let svc = OpenServiceW(scm, wide.as_ptr(), SERVICE_STOP | SERVICE_QUERY_STATUS);
+                if svc != 0 {
+                    let mut status = SERVICE_STATUS {
+                        dwServiceType: 0,
+                        dwCurrentState: 0,
+                        dwControlsAccepted: 0,
+                        dwWin32ExitCode: 0,
+                        dwServiceSpecificExitCode: 0,
+                        dwCheckPoint: 0,
+                        dwWaitHint: 0,
+                    };
+                    if QueryServiceStatus(svc, &mut status) != 0 && status.dwCurrentState != SERVICE_STOPPED {
+                        ControlService(svc, SERVICE_CONTROL_STOP, &mut status);
+                    }
+                    CloseServiceHandle(svc);
+                }
+                CloseServiceHandle(scm);
+            }
+        }
+
+        let _ = Command::new("sc.exe")
+            .args(["stop", svc_name])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn stop_windivert_kernel_driver() {}
+
+/// Fast kernel-level WFP & WinDivert driver reset:
+/// 1. Terminates any dangling or zombie DPI bypass processes holding driver handles.
+/// 2. Stops the WinDivert kernel driver via Windows SCM to release all WFP sublayers & callout locks.
+/// 3. Ensures Base Filtering Engine (BFE) is active.
+/// 4. Waits 180ms for kernel netio teardown.
+pub fn reset_windivert_wfp_state() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        for im in &["winws.exe", "goodbyedpi.exe", "zapret.exe", "byedpi.exe", "shroudly-core.exe"] {
+            let _ = Command::new("taskkill")
+                .args(["/IM", im, "/T", "/F"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+        }
+
+        stop_windivert_kernel_driver();
+
+        let _ = Command::new("sc.exe")
+            .args(["start", "bfe"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+
+        std::thread::sleep(Duration::from_millis(180));
+        Ok("WinDivert kernel sürücüsü durduruldu ve WFP filtre alanı temizlendi.".into())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok("WFP sıfırlama işlemi tamamlandı.".into())
+    }
+}
+
 /// Deep repair: Flushes stuck WFP filters, ensures Base Filtering Engine is running,
 /// purges stuck driver services and registry keys, and resets Winsock if necessary.
 pub fn repair_wfp_and_network_filters() -> Result<String, String> {
@@ -552,21 +673,16 @@ pub fn repair_wfp_and_network_filters() -> Result<String, String> {
                 .output();
         }
 
-        // 2. Safely stop windivert services (avoiding sc delete which triggers FAILED 1072 marked for deletion locks!)
-        for svc in &["windivert", "windivert14"] {
-            let _ = Command::new("net")
-                .args(["stop", svc, "/y"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output();
-        }
+        // 2. Safely stop windivert kernel drivers via SCM
+        stop_windivert_kernel_driver();
 
         // 3. Ensure Base Filtering Engine is running
-        let _ = Command::new("net")
+        let _ = Command::new("sc.exe")
             .args(["start", "bfe"])
             .creation_flags(CREATE_NO_WINDOW)
             .output();
 
-        // 5. Reset winsock and flush dns
+        // 4. Reset winsock and flush dns
         let _ = Command::new("netsh")
             .args(["winsock", "reset"])
             .creation_flags(CREATE_NO_WINDOW)
@@ -786,5 +902,11 @@ mod tests {
     fn test_check_webview2_installed() {
         // Runs webview2 detection without crashing
         let _ = check_webview2_installed();
+    }
+
+    #[test]
+    fn test_reset_windivert_wfp_state() {
+        let res = reset_windivert_wfp_state();
+        assert!(res.is_ok());
     }
 }

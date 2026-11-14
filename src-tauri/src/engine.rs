@@ -977,7 +977,7 @@ impl Engine {
         let mut r = self.start_worker(worker_cfg.clone());
         if let Err(ref err) = r {
             if err.contains("kilitli") || err.contains("10") || err.contains("1072") {
-                let _ = crate::resilience::repair_wfp_and_network_filters();
+                let _ = crate::resilience::reset_windivert_wfp_state();
                 thread::sleep(Duration::from_millis(300));
                 r = self.start_worker(worker_cfg);
             }
@@ -1037,45 +1037,75 @@ impl Engine {
     }
 
     /// Spawns the winws.exe child process with WinDivert kernel desync arguments.
+    /// Incorporates autonomous kernel-level self-healing for exit code 10 (FWP_E_IN_USE)
+    /// and WFP filter locks so the engine restarts cleanly without error popups.
     pub fn start_worker(
         &mut self,
         cfg: EngineWorkerConfig,
     ) -> Result<(), String> {
-        if let Some(mut w) = self.native_worker.take() {
-            w.stop();
-        }
-        if let Some(mut c) = self.child.take() {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
+        let max_attempts = 3;
+        let mut last_err = String::new();
 
-        Self::kill_all_winws();
-
-        let mut cmd = Command::new(&cfg.bin);
-        cmd.args(&cfg.args)
-            .current_dir(&cfg.work_dir)
-            .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-
-        let child = cmd.spawn().map_err(|e| format!("winws.exe başlatılamadı ({}): {e}", cfg.bin.display()))?;
-
-        // Assign to job object so child dies unconditionally if parent process exits
-        if let Some(job) = self.job_handle {
-            use std::os::windows::io::AsRawHandle;
-            assign_process_to_job(job, child.as_raw_handle() as isize);
-        }
-
-        self.child = Some(child);
-
-        // Verification check: give winws.exe 150ms to verify driver load and bind
-        thread::sleep(Duration::from_millis(150));
-        if let Some(ref mut c) = self.child {
-            if let Ok(Some(status)) = c.try_wait() {
-                self.child = None;
-                return Err(format!("winws.exe başlatıldıktan hemen sonra kapandı ({status}). WinDivert sürücüsü yüklenememiş veya başka bir DPI aracı portu tutuyor olabilir."));
+        for attempt in 1..=max_attempts {
+            if let Some(mut w) = self.native_worker.take() {
+                w.stop();
             }
+            if let Some(mut c) = self.child.take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+
+            Self::kill_all_winws();
+
+            let mut cmd = Command::new(&cfg.bin);
+            cmd.args(&cfg.args)
+                .current_dir(&cfg.work_dir)
+                .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+
+            let child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    return Err(format!("winws.exe başlatılamadı ({}): {e}", cfg.bin.display()));
+                }
+            };
+
+            // Assign to job object so child dies unconditionally if parent process exits
+            if let Some(job) = self.job_handle {
+                use std::os::windows::io::AsRawHandle;
+                assign_process_to_job(job, child.as_raw_handle() as isize);
+            }
+
+            self.child = Some(child);
+
+            // Verification check: give winws.exe 180ms to verify driver load and bind
+            thread::sleep(Duration::from_millis(180));
+            if let Some(ref mut c) = self.child {
+                if let Ok(Some(status)) = c.try_wait() {
+                    self.child = None;
+                    let status_str = status.to_string();
+                    let is_recoverable = status_str.contains("10")
+                        || status_str.contains("1072")
+                        || status_str.contains("7")
+                        || status_str.contains("5");
+
+                    last_err = format!("winws.exe başlatıldıktan hemen sonra kapandı ({status}). WinDivert sürücüsü yüklenememiş veya başka bir DPI aracı portu tutuyor olabilir.");
+
+                    if is_recoverable && attempt < max_attempts {
+                        // Autonomous kernel-level self-healing: purge driver locks & sublayers
+                        let _ = crate::resilience::reset_windivert_wfp_state();
+                        thread::sleep(Duration::from_millis(250));
+                        continue;
+                    }
+
+                    return Err(last_err);
+                }
+            }
+
+            // Successfully started and running stably!
+            return Ok(());
         }
 
-        Ok(())
+        Err(last_err)
     }
 
     /// Applies post-start network, DNS and firewall rules.
@@ -1112,7 +1142,9 @@ impl Engine {
                 }
             }
             if found {
-                std::thread::sleep(Duration::from_millis(80));
+                // If any conflicting or zombie processes were terminated, stop the driver so handles unbind cleanly
+                crate::resilience::stop_windivert_kernel_driver();
+                std::thread::sleep(Duration::from_millis(100));
             }
         }
     }
@@ -1188,14 +1220,8 @@ impl Engine {
         apply_gaming_network_tweaks(false);
         apply_quic_firewall_rule(false);
 
-        // Safely STOP the driver service so handles are released cleanly.
-        // We do NOT call "sc delete" here to prevent the service getting into the "marked for deletion (1072)" state!
-        for svc in &["windivert", "windivert14"] {
-            let _ = Command::new("net")
-                .args(["stop", svc, "/y"])
-                .creation_flags(0x0800_0000)
-                .output();
-        }
+        // Safely STOP the driver service via Windows SCM so kernel handles are released cleanly.
+        crate::resilience::stop_windivert_kernel_driver();
     }
 
     /// Full stop: terminates native packet engine, stops relay, restores Discord settings, cleans hosts and proxy state.

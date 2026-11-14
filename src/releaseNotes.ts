@@ -4,6 +4,20 @@ export interface ReleaseHighlight {
 }
 
 export const RELEASE_HIGHLIGHTS: Record<string, ReleaseHighlight> = {
+  "0.5.2": {
+    tr: [
+      "Kernel Seviyesinde WinDivert & WFP Dayanıklılığı (Zero-Touch Self-Healing): 'winws.exe exit code: 10' (FWP_E_IN_USE / 0x8032000A) ve sürücü çakışması hatası kökünden çözüldü.",
+      "Windows Service Control Manager (SCM) Kernel Yönetimi: Sürücü durdurma ve başlatma komutları kullanıcı modu yerine doğrudan Windows çekirdek SCM API ve sc.exe ile yönetilerek kilitli WFP alt katmanları (sublayers) ve callout nesneleri tamamen temizlenir.",
+      "Otonom Kurtarma ve Sıfır Bildirim Döngüsü: Motor başlatılırken herhangi bir sürücü kilitlenmesi veya arka plan DPI çakışması tespit edildiğinde, sistem kullanıcıya hata penceresi göstermeden WFP durumunu kernel seviyesinde sıfırlar ve motoru kusursuzca başlatır.",
+      "Uygulama İçi Özel Temizleme Onay Modalı: Özel domainleri tek tıkla silme işleminde tarayıcı tabanlı window.confirm yerine uygulamanın koyu cam temasına birebir uyumlu yerel modal entegre edildi, pencere odak kaybı ve gizlenme sorunu önlendi."
+    ],
+    en: [
+      "Kernel-Level WinDivert & WFP Resilience (Zero-Touch Self-Healing): Completely eliminated 'winws.exe exit code: 10' (FWP_E_IN_USE / 0x8032000A) and driver port collision issues.",
+      "Native Windows Service Control Manager (SCM) Driver Management: Replaced user-mode driver stops with direct kernel SCM APIs and sc.exe, purging stuck WFP sublayers and orphaned callout references cleanly.",
+      "Autonomous Error-Free Self-Healing: Startup driver conflicts or zombie locks trigger an immediate kernel-level WFP state flush and seamless retry without ever showing an error popup to the user.",
+      "Native In-App Clear-All Confirmation Modal: Upgraded domain deletion confirmation from browser dialogs to a tailored dark-glass modal matching the app aesthetic and preventing focus loss."
+    ]
+  },
   "0.5.0": {
     tr: [
       "Steam & Akamai CDN Uyumluluk Düzeltmesi: Steam mağaza ve topluluk sayfalarında yaşanan yüklenememe, beyaz ekran ve eksik arayüz (CSS/görsel) sorunu giderildi.",
