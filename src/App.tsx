@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import "./styles.css";
 import logoSvg from "./assets/logo.svg";
-import { translations, LANGUAGES, type LangCode } from "./translations";
+import { translations, LANGUAGES, type LangCode, type Translations } from "./translations";
 import { getReleaseHighlights } from "./releaseNotes";
 
 type CustomPlatform = {
@@ -158,7 +158,7 @@ export default function App() {
     }
   }, [lang, isRtl]);
 
-  const t = translations[lang] || translations.en;
+  const t: Translations = translations[lang] || translations.en;
 
   // Appearance, Themes & Personalization
   type ThemeId = "cyber" | "erkek" | "amoled" | "emerald" | "crimson" | "violet" | "frost";
@@ -280,6 +280,7 @@ export default function App() {
 
   // Feedback & Discord Webhook State
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [showClearAllConfirmModal, setShowClearAllConfirmModal] = useState(false);
   const [feedbackCategory, setFeedbackCategory] = useState<"bug" | "feature" | "general">("bug");
   const [feedbackSender, setFeedbackSender] = useState<string>(() => {
     try {
@@ -346,7 +347,7 @@ export default function App() {
   }, [isLangMenuOpen]);
 
   const getDisplayVersion = (rawVer?: string) => {
-    const v = (rawVer || "0.5.0").replace(/^v/, "");
+    const v = (rawVer || "0.5.1").replace(/^v/, "");
     const parts = v.split(/[.+]/);
     if (parts.length > 3) {
       return `${parts[0]}.${parts[1]}.${parts[2]}`;
@@ -825,7 +826,7 @@ export default function App() {
             <img src={logoSvg} alt="Slipstream" className="brand-logo" />
             <div className="status-indicator busy" />
             <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
-            <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.5.0")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+            <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.5.1")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
           </div>
           <div className="window-controls">
             <button className="win-btn minimize" title={t.minimizeTitle} onClick={() => invoke("hide_window")}>
@@ -1368,11 +1369,16 @@ export default function App() {
 
   function clearAllCustomDomains() {
     if (!cfg || cfg.custom_domains.length === 0) return;
-    if (window.confirm(t.clearAllDomainsConfirm)) {
-      if (soundEnabled) playTone("toggle");
-      patch({ custom_domains: [] });
-      setSuccessMsg(t.suc_allCustomDomainsCleared);
-    }
+    if (soundEnabled) playTone("click");
+    setShowClearAllConfirmModal(true);
+  }
+
+  function handleConfirmClearAllDomains() {
+    if (!cfg) return;
+    if (soundEnabled) playTone("toggle");
+    patch({ custom_domains: [] });
+    setShowClearAllConfirmModal(false);
+    setSuccessMsg(t.suc_allCustomDomainsCleared);
   }
 
 
@@ -1392,7 +1398,7 @@ export default function App() {
           <img src={logoSvg} alt="Slipstream" className="brand-logo" />
           <div className={`status-indicator ${busy ? "busy" : on ? "active" : "inactive"}`} />
           <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
-          <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.5.0")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+          <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.5.1")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
         </div>
         <div className="window-controls">
           <button
@@ -2185,7 +2191,7 @@ export default function App() {
                     <div className="pref-meta">
                       <span className="pref-name">{t.versionCheckLabel}</span>
                       <span className="pref-desc">
-                        {t.currentVersionPrefix} v{updateInfo?.current_version || "0.5.0"}
+                        {t.currentVersionPrefix} v{updateInfo?.current_version || "0.5.1"}
                         {updateInfo?.has_update ? (
                           <span style={{ color: "var(--cyan)", fontWeight: 600, marginLeft: 6 }}>
                             {t.newVersionLiveTag(updateInfo.latest_version)}
@@ -3013,7 +3019,7 @@ export default function App() {
                 <span style={{ fontSize: 16 }}>🚀</span>
                 <h3 className="modal-title">
                   {t.releaseNotesTitle(
-                    justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.5.0"
+                    justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.5.1"
                   )}
                 </h3>
               </div>
@@ -3022,7 +3028,7 @@ export default function App() {
             <div className="modal-body" style={{ maxHeight: "320px", overflowY: "auto", padding: "14px 16px" }}>
               <div className="release-notes-list">
                 {(() => {
-                  const targetVer = justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.5.0";
+                  const targetVer = justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.5.1";
                   const notesText = updateInfo?.release_notes?.trim();
 
                   if (notesText && notesText.length > 0) {
@@ -3224,6 +3230,77 @@ export default function App() {
                 disabled={sendingFeedback}
               >
                 {sendingFeedback ? t.feedbackSendingBtn : t.feedbackSendBtn}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+            {/* Clear All Custom Domains Confirmation Modal */}
+      {showClearAllConfirmModal && cfg && (
+        <div className="modal-backdrop" onClick={() => setShowClearAllConfirmModal(false)}>
+          <div className="modal-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, border: "1px solid rgba(239, 68, 68, 0.4)" }}>
+            <div className="modal-header" style={{ borderBottom: "1px solid rgba(239, 68, 68, 0.2)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 18 }}>⚠️</span>
+                <h3 className="modal-title" style={{ color: "#f87171" }}>
+                  {t.clearAllDomainsTitle}
+                </h3>
+              </div>
+              <button
+                className="modal-close"
+                onClick={() => {
+                  if (soundEnabled) playTone("click");
+                  setShowClearAllConfirmModal(false);
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body" style={{ padding: "16px", fontSize: "13px", color: "var(--text-main, #e2e8f0)", lineHeight: 1.6 }}>
+              <p style={{ margin: "0 0 12px 0" }}>
+                {t.clearAllDomainsDesc(cfg.custom_domains.length)}
+              </p>
+              <div style={{
+                background: "rgba(239, 68, 68, 0.08)",
+                border: "1px dashed rgba(239, 68, 68, 0.3)",
+                borderRadius: "8px",
+                padding: "10px 12px",
+                fontSize: "12px",
+                color: "#fca5a5",
+                display: "flex",
+                alignItems: "center",
+                gap: 8
+              }}>
+                <span>🗑️</span>
+                <span>{t.tabCustomRules(cfg.custom_domains.length)}</span>
+              </div>
+            </div>
+            <div className="modal-footer" style={{ display: "flex", justifyContent: "flex-end", gap: 10, padding: "12px 16px" }}>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => {
+                  if (soundEnabled) playTone("click");
+                  setShowClearAllConfirmModal(false);
+                }}
+                style={{ padding: "8px 16px" }}
+              >
+                {t.cancelBtn}
+              </button>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={handleConfirmClearAllDomains}
+                style={{
+                  background: "linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)",
+                  border: "none",
+                  boxShadow: "0 0 16px rgba(239, 68, 68, 0.4)",
+                  padding: "8px 18px",
+                  fontWeight: 600
+                }}
+              >
+                🗑️ {t.clearAllDomainsBtn}
               </button>
             </div>
           </div>
