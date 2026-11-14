@@ -581,7 +581,10 @@ mod tests {
         assert!(domains.contains(&"x.com".to_string()));
         assert!(domains.contains(&"instagram.com".to_string()));
         assert!(domains.contains(&"pastebin.com".to_string()));
-        assert!(domains.contains(&"youtube.com".to_string()));
+        assert!(domains.contains(&"wattpad.com".to_string()));
+        // Unblocked gaming platforms like Steam must NEVER be included in browser domains to protect UI and Akamai CDNs
+        assert!(!domains.contains(&"steampowered.com".to_string()));
+        assert!(!domains.contains(&"steamstatic.com".to_string()));
     }
 
     #[test]

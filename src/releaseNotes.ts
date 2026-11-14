@@ -6,18 +6,20 @@ export interface ReleaseHighlight {
 export const RELEASE_HIGHLIGHTS: Record<string, ReleaseHighlight> = {
   "0.3.9": {
     tr: [
-      "Evrensel Web & Tarayıcı DPI Atlama: Tarayıcılarda (Thorium, Brave, Chrome, Edge, Firefox vb.) ve eklenen uygulamalarda tüm sitelerin engelsiz açılabilmesi için evrensel paket desync modu devreye alındı.",
-      "Şifreli DoH (DNS-over-HTTPS) & DNS Zehirlenmesi Koruması: İSS UDP port 53 engellemeleri ve DNS zehirlemeleri Windows 11 yerleşik DoH ile tamamen aşıldı; alan adları doğrudan gerçek IP adreslerine çözümleniyor.",
-      "Özel Domain ve Özel Platform Desteği Güçlendirildi: Kullanıcı tarafından eklenen domainler ve platformlar artık gecikmesiz ve otomatik olarak DPI korumasından geçiriliyor.",
-      "Canlı Süreç ve Oyun Algılayıcı (Watchdog): Arka planda çalışan oyun ve uygulamaları dinamik olarak gerçek zamanlı algılayan ve arayüze anında yansıtan nöbetçi mekanizma eklendi.",
-      "Tam Sessiz Başlangıç (Stealth Startup): 'Başlangıçta Tepsiye Gizlen' aktifken bilgisayar açılışında ekranda hiçbir pencere ve bildirim gösterilmeden doğrudan tepsiye yerleşmesi sağlandı."
+      "Steam & Akamai CDN Uyumluluk Düzeltmesi: Steam'in web mağazası ve topluluk sayfalarında yaşanan gecikme, beyaz ekran ve eksik arayüz (CSS/görsel) sorunu giderildi; engelsiz servisler doğrudan saf kernel hızında iletilir.",
+      "Kesin Hedefli Paket İzolasyonu (Targeted Desync): WinWS paket desync işlemi yalnızca kullanıcının seçtiği veya eklediği alan adlarına uygulanır; genel internet trafiğine, bankacılık ve oyun servislerine asla müdahale edilmez.",
+      "Tek Tıkla Özel Domainleri Temizleme Butonu: Özel domain ekleme bölümüne eklenen tüm domainleri tek tuşla silebilen 'Tümünü Temizle' butonu ve onay mekanizması eklendi.",
+      "Dinamik DoH ile DNS Zehirlemesi Koruması: Eklenen özel alan adları ve platformlar için gerçek IP'ler Cloudflare DoH ile anında çözülüp hosts seviyesinde İSS zehirlemesinden (BTK uyarısı) arındırılır.",
+      "Canlı Süreç ve Oyun Algılayıcı (Watchdog): Arka planda çalışan oyun ve uygulamaları dinamik algılayıp arayüzde anında 'Canlı' rozetiyle gösteren nöbetçi döngü eklendi.",
+      "Tam Sessiz Başlangıç (Stealth Startup): 'Başlangıçta Tepsiye Gizlen' aktifken açılışta ekranda hiçbir pencere veya bildirim gösterilmeden doğrudan tepsiye yerleşmesi sağlandı."
     ],
     en: [
-      "Universal Web & Browser DPI Bypass: Enabled universal packet desync for browsers (Thorium, Brave, Chrome, Edge, Firefox, etc.) and custom apps to bypass ISP censorship on all websites.",
-      "Encrypted DoH & DNS Poisoning Defense: Defeated ISP UDP 53 blocking and DNS poisoning via native Windows 11 DoH, resolving blocked domains directly to their real Anycast IPs.",
-      "Enhanced Custom Domains & Platforms: Custom user domains and added applications are now automatically and reliably routed through DPI bypass.",
-      "Real-time Process & Game Watchdog: Added a background watchdog that dynamically monitors running games and apps, instantly updating live status badges and tags in the UI.",
-      "Zero-Popup Silent Startup: Ensured 100% stealth tray startup with zero on-screen notifications or window popups when 'Start Minimized to Tray' is enabled."
+      "Steam & Akamai CDN Compatibility Fix: Resolved loading stalls, blank white screens, and broken CSS/images on Steam web pages; unblocked services pass through at native line speed.",
+      "Strict Targeted Packet Isolation: WinWS packet desync is strictly scoped to user-selected or custom-added domains; normal internet traffic, banking, and gaming services are never touched.",
+      "One-Click Clear All Custom Domains: Added a 'Clear All' button with confirmation to delete all custom domains with a single click.",
+      "Dynamic DoH DNS Poisoning Immunity: Custom domains are resolved via Cloudflare DoH and injected at the hosts level to defeat ISP DNS poisoning and ministry block warnings.",
+      "Real-Time Process Watchdog: Added a background watchdog dynamically detecting running games/apps with live UI status badges.",
+      "Zero-Popup Stealth Startup: Completely silent tray launch without on-screen windows or notifications when 'Start Minimized to Tray' is enabled."
     ]
   },
   "0.3.8": {

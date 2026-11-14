@@ -192,16 +192,8 @@ pub fn get_browser_domains() -> Vec<String> {
         // Community, Forums & Blogs
         "eksisozluk.com".into(), "eksisozluk1923.com".into(), "eksisozluk2023.com".into(), "eksisozluk42.com".into(), "eksisozluk.org".into(),
         "medium.com".into(), "substack.com".into(),
-        // Gaming Platforms
+        // Blocked Gaming Platforms
         "roblox.com".into(), "rbxcdn.com".into(), "setup.rbxcdn.com".into(), "roblox.com.edgekey.net".into(),
-        "steampowered.com".into(), "steamcommunity.com".into(), "steamstatic.com".into(),
-        "epicgames.com".into(), "unrealengine.com".into(),
-        "riotgames.com".into(), "leagueoflegends.com".into(), "playvalorant.com".into(),
-        // Streaming & Media
-        "youtube.com".into(), "youtu.be".into(), "googlevideo.com".into(), "ytimg.com".into(), "ggpht.com".into(), "youtubei.googleapis.com".into(),
-        "twitch.tv".into(), "ttvnw.net".into(), "jtvnw.net".into(), "twitchcdn.net".into(),
-        "kick.com".into(), "kick-cdn.com".into(), "stream.kick.com".into(),
-        "spotify.com".into(), "scdn.co".into(),
         // Commonly blocked services / utilities in Turkey & globally
         "pastebin.com".into(), "imgur.com".into(), "i.imgur.com".into(), "wattpad.com".into(), "archive.org".into(),
         "proton.me".into(), "protonmail.com".into(), "protonvpn.com".into(),

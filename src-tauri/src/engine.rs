@@ -854,35 +854,10 @@ fn push(a: &mut Vec<String>, xs: &[&str]) {
     a.extend(xs.iter().map(|s| s.to_string()));
 }
 
-pub fn is_universal_web_mode(cfg: &Config) -> bool {
-    // 1. Any browser in enabled_apps
-    for app in &cfg.enabled_apps {
-        if crate::apps::is_browser(app, app) {
-            return true;
-        }
-    }
-    // 2. Any browser in custom_platforms
-    for plat in &cfg.custom_platforms {
-        if cfg.enabled_apps.iter().any(|e| e == &plat.id) {
-            let is_plat_browser = crate::apps::is_browser(&plat.name, &plat.name)
-                || plat.exe_name.as_ref().map(|e| crate::apps::is_browser(&plat.name, e)).unwrap_or(false)
-                || plat.exe_path.as_ref().map(|p| crate::apps::is_browser(&plat.name, p)).unwrap_or(false);
-            if is_plat_browser {
-                return true;
-            }
-        }
-    }
-    // 3. Any browser in custom_exes
-    for exe in &cfg.custom_exes {
-        if crate::apps::is_browser(exe, exe) {
-            return true;
-        }
-    }
-    false
-}
-
 /// Builds the winws argument list. Traffic matching TCP 80/443 and Discord voice
 /// UDP is desynced transparently at the kernel packet level via WinDivert.
+/// Hostlist filtering is STRICTLY enforced so unblocked sites (Steam, banking, local networks)
+/// pass directly through the network stack with ZERO packet modification and ZERO latency!
 #[allow(dead_code)]
 fn build_args(cfg: &Config, hosts: &Path) -> Vec<String> {
     let dir = hosts.parent();
@@ -895,8 +870,6 @@ fn build_args(cfg: &Config, hosts: &Path) -> Vec<String> {
     };
     let tls_flags = isp::resolve_strategy_tls(&strat_id, dir);
 
-    let universal_mode = is_universal_web_mode(cfg);
-
     let mut a = vec![];
     push(&mut a, &["--wf-tcp=80,443"]);
     // Capture only UDP 443 for QUIC desync. Discord voice UDP (ports 19294-19344 & 50000-65535)
@@ -905,74 +878,40 @@ fn build_args(cfg: &Config, hosts: &Path) -> Vec<String> {
 
     let hostlist_arg = format!("--hostlist={}", hosts.display());
 
-    // QUIC (HTTP/3)
-    if universal_mode {
-        push(
-            &mut a,
-            &[
-                "--filter-udp=443",
-                "--dpi-desync=fake",
-                "--dpi-desync-repeats=1",
-                "--new",
-            ],
-        );
-    } else {
-        push(
-            &mut a,
-            &[
-                "--filter-udp=443",
-                &hostlist_arg,
-                "--dpi-desync=fake",
-                "--dpi-desync-repeats=1",
-                "--new",
-            ],
-        );
-    }
+    // QUIC (HTTP/3) - strictly targeted by active hostlist
+    push(
+        &mut a,
+        &[
+            "--filter-udp=443",
+            &hostlist_arg,
+            "--dpi-desync=fake",
+            "--dpi-desync-repeats=1",
+            "--new",
+        ],
+    );
 
-    // Plain HTTP
-    if universal_mode {
-        push(
-            &mut a,
-            &[
-                "--filter-tcp=80",
-                "--dpi-desync=fake,split2",
-                "--dpi-desync-autottl=2",
-                "--dpi-desync-fooling=md5sig",
-                "--new",
-            ],
-        );
-    } else {
-        push(
-            &mut a,
-            &[
-                "--filter-tcp=80",
-                &hostlist_arg,
-                "--dpi-desync=fake,split2",
-                "--dpi-desync-autottl=2",
-                "--dpi-desync-fooling=md5sig",
-                "--new",
-            ],
-        );
-    }
+    // Plain HTTP - strictly targeted by active hostlist
+    push(
+        &mut a,
+        &[
+            "--filter-tcp=80",
+            &hostlist_arg,
+            "--dpi-desync=fake,split2",
+            "--dpi-desync-autottl=2",
+            "--dpi-desync-fooling=md5sig",
+            "--new",
+        ],
+    );
 
-    // HTTPS: in universal mode, applies desync to ALL web traffic without hostlist restriction.
-    // In targeted mode (games/Discord only), applies desync ONLY to domains matching the active hostlist.
-    if universal_mode {
-        push(
-            &mut a,
-            &[
-                "--filter-tcp=443",
-            ],
-        );
-    } else {
-        push(
-            &mut a,
-            &[
-                "--filter-tcp=443",
-                &hostlist_arg,
-            ],
-        );
-    }
+    // HTTPS: applies desync ONLY to domains matching the active hostlist (subdomains auto apply).
+    // All non-listed sites (Steam, Epic, Riot, banking, local networks) pass through with ZERO overhead (0 ping)!
+    push(
+        &mut a,
+        &[
+            "--filter-tcp=443",
+            &hostlist_arg,
+        ],
+    );
     let tls_refs: Vec<&str> = tls_flags.iter().map(|s| s.as_str()).collect();
     push(&mut a, &tls_refs);
     a
@@ -1439,22 +1378,13 @@ mod tests {
     }
 
     #[test]
-    fn test_universal_web_mode_triggers() {
-        // 1. Default config (discord + roblox) should NOT be universal mode
-        let default_cfg = Config::default();
-        assert!(!is_universal_web_mode(&default_cfg), "Default config should be targeted mode");
-
-        // 2. Config with custom exe thorium.exe SHOULD be universal mode
-        let mut thorium_cfg = Config::default();
-        thorium_cfg.custom_exes = vec!["thorium.exe".to_string()];
-        assert!(is_universal_web_mode(&thorium_cfg), "Thorium browser should activate universal web mode");
-
-        // 3. Verify build_args omits --hostlist from TCP 80/443 when universal mode is active
+    fn test_strict_targeted_hostlist_enforcement() {
+        let mut cfg = Config::default();
+        cfg.custom_exes = vec!["thorium.exe".to_string()];
         let hosts = PathBuf::from("hosts.txt");
-        let args = build_args(&thorium_cfg, &hosts);
+        let args = build_args(&cfg, &hosts);
         let hostlist_flag = format!("--hostlist={}", hosts.display());
-        // Quic, http, https should NOT have hostlist flag
-        assert!(!args.contains(&hostlist_flag), "Universal web mode must omit --hostlist to allow arbitrary web browsing");
+        assert!(args.contains(&hostlist_flag), "Strict targeted mode must ALWAYS include --hostlist to protect unblocked traffic (Steam, banking, etc.)");
     }
 
     #[test]

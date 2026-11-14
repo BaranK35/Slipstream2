@@ -1366,6 +1366,15 @@ export default function App() {
     });
   }
 
+  function clearAllCustomDomains() {
+    if (!cfg || cfg.custom_domains.length === 0) return;
+    if (window.confirm(t.clearAllDomainsConfirm)) {
+      if (soundEnabled) playTone("toggle");
+      patch({ custom_domains: [] });
+      setSuccessMsg(t.suc_allCustomDomainsCleared);
+    }
+  }
+
 
   const appCount = allPlatforms.filter((p) => p.category === "app").length;
   const gameCount = allPlatforms.filter((p) => p.category === "game").length;
@@ -1943,18 +1952,47 @@ export default function App() {
               {cfg.custom_domains.length === 0 ? (
                 <p className="empty-state">{t.noCustomDomains}</p>
               ) : (
-                cfg.custom_domains.map((dom) => (
-                  <div key={dom} className="rule-chip">
-                    <span className="chip-text">{dom}</span>
+                <>
+                  <div className="rules-header-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, width: "100%" }}>
+                    <span style={{ fontSize: 12, color: "var(--text-dim, #94a3b8)" }}>
+                      {t.tabCustomRules(cfg.custom_domains.length)}
+                    </span>
                     <button
-                      className="chip-remove"
-                      onClick={() => removeRule(dom)}
-                      title={t.removeRuleTitle}
+                      type="button"
+                      className="clear-all-domains-btn"
+                      style={{
+                        background: "rgba(239, 68, 68, 0.12)",
+                        border: "1px solid rgba(239, 68, 68, 0.35)",
+                        color: "#ef4444",
+                        fontSize: "11.5px",
+                        fontWeight: 600,
+                        padding: "4px 10px",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "5px"
+                      }}
+                      onClick={clearAllCustomDomains}
+                      title={t.clearAllDomainsConfirm}
                     >
-                      ×
+                      🗑️ {t.clearAllDomainsBtn}
                     </button>
                   </div>
-                ))
+                  {cfg.custom_domains.map((dom) => (
+                    <div key={dom} className="rule-chip">
+                      <span className="chip-text">{dom}</span>
+                      <button
+                        className="chip-remove"
+                        onClick={() => removeRule(dom)}
+                        title={t.removeRuleTitle}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </>
               )}
             </div>
           </section>

@@ -258,8 +258,39 @@ pub fn clear_bypass_hosts() {
     }
 }
 
+/// Queries Cloudflare DoH to resolve a clean, unpoisoned IPv4 address for any domain.
+pub fn resolve_doh_ip(domain: &str) -> Option<String> {
+    let clean_domain = domain.trim().trim_start_matches("www.");
+    let url = format!("https://1.1.1.1/dns-query?name={clean_domain}&type=A");
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_millis(1500))
+        .build()
+        .ok()?;
+    let text = client
+        .get(&url)
+        .header("accept", "application/dns-json")
+        .send()
+        .ok()?
+        .text()
+        .ok()?;
+    let resp: serde_json::Value = serde_json::from_str(&text).ok()?;
+
+    let answers = resp.get("Answer")?.as_array()?;
+    for a in answers {
+        if a.get("type")?.as_u64()? == 1 {
+            if let Some(ip) = a.get("data")?.as_str() {
+                // Ignore any BTK poisoned redirect IPs (195.175.254.2)
+                if ip != "195.175.254.2" {
+                    return Some(ip.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Injects real clean IPs into Windows hosts file to neutralize ISP DNS poisoning
-/// for enabled apps (such as Discord and Roblox) with zero proxy or adapter DNS tampering.
+/// for enabled apps (such as Discord and Roblox) and custom domains with zero proxy or adapter DNS tampering.
 pub fn apply_bypass_hosts(cfg: &Config) {
     clear_bypass_hosts();
 
@@ -276,6 +307,31 @@ pub fn apply_bypass_hosts(cfg: &Config) {
     if has_roblox {
         for (domain, ip) in ROBLOX_HOST_MAP {
             entries.push(format!("{ip:<15} {domain}"));
+        }
+    }
+
+    // Dynamically resolve and inject clean IPs for user-added custom domains to defeat ISP DNS poisoning
+    for dom in &cfg.custom_domains {
+        let clean = dom.trim().trim_start_matches("www.");
+        if !clean.is_empty() {
+            if let Some(ip) = resolve_doh_ip(clean) {
+                entries.push(format!("{ip:<15} {clean}"));
+                entries.push(format!("{ip:<15} www.{clean}"));
+            }
+        }
+    }
+
+    // Also for user-added custom platforms
+    for plat in &cfg.custom_platforms {
+        if cfg.enabled_apps.iter().any(|e| e == &plat.id) {
+            for dom in &plat.domains {
+                let clean = dom.trim().trim_start_matches("www.");
+                if !clean.is_empty() {
+                    if let Some(ip) = resolve_doh_ip(clean) {
+                        entries.push(format!("{ip:<15} {clean}"));
+                    }
+                }
+            }
         }
     }
 
@@ -311,7 +367,6 @@ pub fn apply_dns(cfg: &Config, dir: &Path) {
         "google" => ("8.8.8.8", "8.8.4.4", "2001:4860:4860::8888", "2001:4860:4860::8844", "https://dns.google/dns-query"),
         "quad9" => ("9.9.9.9", "149.112.112.112", "2620:fe::fe", "2620:fe::9", "https://dns.quad9.net/dns-query"),
         "adguard" => ("94.140.14.140", "94.140.14.141", "2a10:50c0::ad1:ff", "2a10:50c0::ad2:ff", "https://dns.adguard-dns.com/dns-query"),
-        "yandex" => ("77.88.8.8", "77.88.8.1", "2a02:6b8::feed:0ff", "2a02:6b8:0:1::feed:0ff", "https://common.dot.dns.yandex.net/dns-query"),
         _ => ("1.1.1.1", "1.0.0.1", "2606:4700:4700::1111", "2606:4700:4700::1001", "https://cloudflare-dns.com/dns-query"),
     };
 
