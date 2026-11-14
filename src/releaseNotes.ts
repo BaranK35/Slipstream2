@@ -4,9 +4,9 @@ export interface ReleaseHighlight {
 }
 
 export const RELEASE_HIGHLIGHTS: Record<string, ReleaseHighlight> = {
-  "0.3.9": {
+  "0.5.0": {
     tr: [
-      "Steam & Akamai CDN Uyumluluk Düzeltmesi: Steam'in web mağazası ve topluluk sayfalarında yaşanan gecikme, beyaz ekran ve eksik arayüz (CSS/görsel) sorunu giderildi; engelsiz servisler doğrudan saf kernel hızında iletilir.",
+      "Steam & Akamai CDN Uyumluluk Düzeltmesi: Steam mağaza ve topluluk sayfalarında yaşanan yüklenememe, beyaz ekran ve eksik arayüz (CSS/görsel) sorunu giderildi.",
       "Kesin Hedefli Paket İzolasyonu (Targeted Desync): WinWS paket desync işlemi yalnızca kullanıcının seçtiği veya eklediği alan adlarına uygulanır; genel internet trafiğine, bankacılık ve oyun servislerine asla müdahale edilmez.",
       "Tek Tıkla Özel Domainleri Temizleme Butonu: Özel domain ekleme bölümüne eklenen tüm domainleri tek tuşla silebilen 'Tümünü Temizle' butonu ve onay mekanizması eklendi.",
       "Dinamik DoH ile DNS Zehirlemesi Koruması: Eklenen özel alan adları ve platformlar için gerçek IP'ler Cloudflare DoH ile anında çözülüp hosts seviyesinde İSS zehirlemesinden (BTK uyarısı) arındırılır.",

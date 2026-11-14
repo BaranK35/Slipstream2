@@ -346,7 +346,7 @@ export default function App() {
   }, [isLangMenuOpen]);
 
   const getDisplayVersion = (rawVer?: string) => {
-    const v = (rawVer || "0.3.9").replace(/^v/, "");
+    const v = (rawVer || "0.5.0").replace(/^v/, "");
     const parts = v.split(/[.+]/);
     if (parts.length > 3) {
       return `${parts[0]}.${parts[1]}.${parts[2]}`;
@@ -825,7 +825,7 @@ export default function App() {
             <img src={logoSvg} alt="Slipstream" className="brand-logo" />
             <div className="status-indicator busy" />
             <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
-            <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.3.9")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+            <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.5.0")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
           </div>
           <div className="window-controls">
             <button className="win-btn minimize" title={t.minimizeTitle} onClick={() => invoke("hide_window")}>
@@ -1392,7 +1392,7 @@ export default function App() {
           <img src={logoSvg} alt="Slipstream" className="brand-logo" />
           <div className={`status-indicator ${busy ? "busy" : on ? "active" : "inactive"}`} />
           <span className="brand-name" data-tauri-drag-region>{t.appName}</span>
-          <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.3.9")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
+          <span className="version-pill" title={t.versionPrefix(updateInfo?.current_version || "0.5.0")}>v{getDisplayVersion(updateInfo?.current_version)}</span>
         </div>
         <div className="window-controls">
           <button
@@ -2185,7 +2185,7 @@ export default function App() {
                     <div className="pref-meta">
                       <span className="pref-name">{t.versionCheckLabel}</span>
                       <span className="pref-desc">
-                        {t.currentVersionPrefix} v{updateInfo?.current_version || "0.3.9"}
+                        {t.currentVersionPrefix} v{updateInfo?.current_version || "0.5.0"}
                         {updateInfo?.has_update ? (
                           <span style={{ color: "var(--cyan)", fontWeight: 600, marginLeft: 6 }}>
                             {t.newVersionLiveTag(updateInfo.latest_version)}
@@ -3013,7 +3013,7 @@ export default function App() {
                 <span style={{ fontSize: 16 }}>🚀</span>
                 <h3 className="modal-title">
                   {t.releaseNotesTitle(
-                    justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.3.9"
+                    justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.5.0"
                   )}
                 </h3>
               </div>
@@ -3022,7 +3022,7 @@ export default function App() {
             <div className="modal-body" style={{ maxHeight: "320px", overflowY: "auto", padding: "14px 16px" }}>
               <div className="release-notes-list">
                 {(() => {
-                  const targetVer = justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.3.9";
+                  const targetVer = justUpdatedVersion || updateInfo?.latest_version || updateInfo?.current_version || "0.5.0";
                   const notesText = updateInfo?.release_notes?.trim();
 
                   if (notesText && notesText.length > 0) {

@@ -1,6 +1,6 @@
 {
   "productName": "Slipstream",
-  "version": "0.3.9",
+  "version": "0.5.0",
   "identifier": "app.slipstream.desktop",
   "build": {
     "frontendDist": "../dist",
